@@ -77,6 +77,13 @@ make ci         # everything CI runs
 `cargo-nextest` is the test runner in CI. Install it locally with
 `cargo install cargo-nextest`.
 
+### Local quickstart smoke test
+
+The optional **Quickstart smoke** workflow is manually triggered from the
+Actions tab. It builds every contract, starts a local `stellar/quickstart`
+container, and deploys each generated WASM artifact. It is intentionally not a
+required pull-request check.
+
 ## Design rules
 
 **Money math errors; it never saturates.** Every arithmetic operation goes

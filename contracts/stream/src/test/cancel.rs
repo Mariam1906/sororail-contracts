@@ -132,6 +132,23 @@ fn cancel_after_stop_refunds_nothing_and_settles_everything() {
 }
 
 #[test]
+fn cancel_after_stop_with_prior_withdrawal_refunds_nothing_and_pays_the_remainder() {
+    let f = Fixture::new(true);
+    f.at(START + 400);
+    assert_eq!(f.client.withdraw(&None), RATE * 400);
+
+    f.at(STOP + 500);
+    f.client.cancel();
+
+    let stream = f.client.get();
+    assert_eq!(f.token.balance(&f.recipient), DEPOSITED);
+    assert_eq!(stream.withdrawn, DEPOSITED);
+    assert_eq!(stream.refunded, 0);
+    assert_eq!(f.held(), 0);
+    f.assert_conserved();
+}
+
+#[test]
 fn cancel_before_start_refunds_the_whole_deposit() {
     let f = Fixture::new(true);
     let sender_before = f.token.balance(&f.sender);

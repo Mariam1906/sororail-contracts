@@ -1,0 +1,42 @@
+name: Quickstart smoke
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy-smoke:
+    name: deploy contracts to local quickstart
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de
+        with:
+          toolchain: "1.97.1"
+          targets: wasm32v1-none
+      - uses: stellar/stellar-cli@8e402ea28202950b272fbabc34caad4d2f64fe87 # v27.1.0
+      - name: build contract wasm
+        run: cargo build --workspace --exclude sororail-integration-tests --target wasm32v1-none --release
+      - name: start Stellar quickstart
+        run: |
+          docker run --detach --name stellar-quickstart \
+            --publish 8000:8000 \
+            stellar/quickstart:testing \
+            --standalone --enable-soroban-rpc
+          for attempt in {1..30}; do
+            status="$(curl --silent --output /dev/null --write-out '%{http_code}' http://localhost:8000/soroban/rpc || true)"
+            case "$status" in 200|400|405) exit 0 ;; esac
+            sleep 2
+          done
+          docker logs stellar-quickstart
+          exit 1
+      - name: configure a funded local identity
+        run: |
+          stellar network add local \
+            --rpc-url http://localhost:8000/soroban/rpc \
+            --network-passphrase "Standalone Network ; February 2017"
+          stellar keys generate quickstart-admin --network local --fund
+      - name: deploy every contract
+        run: ./scripts/smoke_quickstart.sh

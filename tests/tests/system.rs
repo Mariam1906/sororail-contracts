@@ -28,6 +28,7 @@ const START: u64 = 1_000_000;
 const MINT: i128 = 100_000_000;
 const YEAR: u64 = 31_536_000;
 const MONTH: u64 = 2_592_000;
+const ATOMIC_18: i128 = 1_000_000_000_000_000_000;
 
 /// One employer, one token, and every SoroRail contract deployed against it.
 struct System<'a> {
@@ -39,10 +40,15 @@ struct System<'a> {
     vesting: VestingContractClient<'a>,
     recurring: RecurringContractClient<'a>,
     batch: BatchPayoutContractClient<'a>,
+    minted: i128,
 }
 
 impl System<'_> {
     fn new() -> Self {
+        Self::with_mint(MINT)
+    }
+
+    fn with_mint(minted: i128) -> Self {
         let env = Env::default();
         env.mock_all_auths();
         env.ledger().with_mut(|l| l.timestamp = START);
@@ -50,7 +56,7 @@ impl System<'_> {
         let employer = Address::generate(&env);
         let issuer = Address::generate(&env);
         let token_address = env.register_stellar_asset_contract_v2(issuer).address();
-        StellarAssetClient::new(&env, &token_address).mint(&employer, &MINT);
+        StellarAssetClient::new(&env, &token_address).mint(&employer, &minted);
 
         System {
             token: TokenClient::new(&env, &token_address),
@@ -60,6 +66,7 @@ impl System<'_> {
             recurring: RecurringContractClient::new(&env, &env.register(RecurringContract, ())),
             batch: BatchPayoutContractClient::new(&env, &env.register(BatchPayoutContract, ())),
             employer,
+            minted,
             env,
         }
     }
@@ -96,10 +103,99 @@ impl System<'_> {
     fn assert_nothing_lost(&self, parties: &[&Address]) {
         assert_eq!(
             self.total_held(parties),
-            MINT,
+            self.minted,
             "value leaked or was conjured somewhere in the system"
         );
     }
+}
+
+/// Every contract must preserve exact balances when a token uses 18 decimal
+/// places, as bridged assets commonly do.
+#[test]
+fn eighteen_decimal_token_lifecycles_conserve_value_across_every_contract() {
+    let s = System::with_mint(100 * ATOMIC_18);
+    let alice = Address::generate(&s.env);
+    let bob = Address::generate(&s.env);
+    let recipient = Address::generate(&s.env);
+    let beneficiary = Address::generate(&s.env);
+    let vendor = Address::generate(&s.env);
+    let parties = [&alice, &bob, &recipient, &beneficiary, &vendor];
+
+    let payroll = vec![
+        &s.env,
+        Payment {
+            to: alice.clone(),
+            amount: ATOMIC_18,
+        },
+        Payment {
+            to: bob.clone(),
+            amount: 2 * ATOMIC_18,
+        },
+    ];
+    let receipt = s.batch.execute(&s.employer, &s.token.address, &payroll);
+    assert_eq!(receipt.total, 3 * ATOMIC_18);
+    s.assert_nothing_lost(&parties);
+
+    s.escrow.init(
+        &s.employer,
+        &beneficiary,
+        &None,
+        &s.token.address,
+        &(3 * ATOMIC_18),
+        &(START + 100),
+    );
+    s.escrow.fund();
+    s.escrow.release(&s.employer);
+    assert_eq!(s.balance(&beneficiary), 3 * ATOMIC_18);
+    s.assert_nothing_lost(&parties);
+
+    let rate = ATOMIC_18 / 100;
+    s.stream.create(
+        &s.employer,
+        &recipient,
+        &s.token.address,
+        &rate,
+        &START,
+        &(START + 100),
+        &true,
+    );
+    s.at(START + 100);
+    assert_eq!(s.stream.withdraw(&None), ATOMIC_18);
+    assert_eq!(s.balance(&recipient), ATOMIC_18);
+    s.assert_nothing_lost(&parties);
+
+    let vesting_start = START + 100;
+    s.vesting.create(
+        &s.employer,
+        &beneficiary,
+        &s.token.address,
+        &(4 * ATOMIC_18),
+        &vesting_start,
+        &1,
+        &4,
+        &true,
+    );
+    s.at(vesting_start + 4);
+    assert_eq!(s.vesting.claim(), 4 * ATOMIC_18);
+    assert_eq!(s.balance(&beneficiary), 7 * ATOMIC_18);
+    s.assert_nothing_lost(&parties);
+
+    s.recurring.authorize(
+        &s.employer,
+        &vendor,
+        &s.token.address,
+        &(ATOMIC_18 / 2),
+        &1,
+        &Some(2),
+    );
+    let expiry = s.env.ledger().sequence() + 500_000;
+    s.token
+        .approve(&s.employer, &s.recurring.address, &ATOMIC_18, &expiry);
+    s.at(vesting_start + 5);
+    assert_eq!(s.recurring.charge(), ATOMIC_18 / 2);
+    s.recurring.cancel(&s.employer);
+    assert_eq!(s.balance(&vendor), ATOMIC_18 / 2);
+    s.assert_nothing_lost(&parties);
 }
 
 /// A month of operations touching all five contracts, then unwound.
