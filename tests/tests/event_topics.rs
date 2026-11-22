@@ -252,6 +252,7 @@ fn every_public_event_has_a_pinned_topic_name() {
         ("stream", "Extended", "extended"),
         ("stream", "ToppedUp", "topped_up"),
         ("stream", "Withdrawn", "withdrawn"),
+        ("vesting", "BeneficiaryTransferred", "beneficiary_transferred"),
         ("vesting", "Claimed", "claimed"),
         ("vesting", "Created", "created"),
         ("vesting", "Revoked", "revoked"),
@@ -349,5 +350,40 @@ fn batch_payout_memo_is_event_data_not_a_topic() {
         lines[memo].contains("Option<BytesN<32>>"),
         "memo type changed: {}",
         lines[memo]
+    );
+}
+
+#[test]
+fn stream_created_payload_lays_out_the_economics() {
+    // #401: an indexer must be able to rebuild a stream's economics from the
+    // `Created` event alone, without a follow-up `get()`. The payload carries
+    // the rate and the span, and `deposited` is the funded total
+    // (`rate_per_second * (stop - start)`). Pin the field names, their order
+    // and their types so the layout cannot drift silently.
+    let source = fs::read_to_string(workspace_root().join("contracts/stream/src/events.rs"))
+        .expect("stream events.rs is readable");
+    let body = source
+        .split("pub struct Created {")
+        .nth(1)
+        .and_then(|rest| rest.split('}').next())
+        .expect("stream::Created is declared");
+    let fields: Vec<&str> = body
+        .lines()
+        .map(str::trim)
+        .filter(|line| line.starts_with("pub "))
+        .collect();
+    assert_eq!(
+        fields,
+        [
+            "pub sender: Address,",
+            "pub recipient: Address,",
+            "pub token: Address,",
+            "pub rate_per_second: i128,",
+            "pub start: u64,",
+            "pub stop: u64,",
+            "pub cancellable: bool,",
+            "pub deposited: i128,",
+        ],
+        "stream::Created data layout changed; update docs/events.md and indexers"
     );
 }

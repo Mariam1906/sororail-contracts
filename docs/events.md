@@ -48,6 +48,7 @@ Every event emits topics in this order:
 | `stream` | `ToppedUp` | `topped_up` | `sender` | `amount`, `new_stop`, `deposited` |
 | `stream` | `Extended` | `extended` | `sender` | `added`, `old_stop`, `new_stop`, `deposited` |
 | `vesting` | `Created` | `created` | `grantor` | `beneficiary`, `token`, `total`, `start`, `cliff`, `duration`, `revocable` |
+| `vesting` | `BeneficiaryTransferred` | `beneficiary_transferred` | `from` | `to` |
 | `vesting` | `Claimed` | `claimed` | `beneficiary` | `amount`, `total_claimed` |
 | `vesting` | `Revoked` | `revoked` | `grantor` | `returned_to_grantor`, `still_claimable`, `revoked_at` |
 | `recurring` | `Authorized` | `authorized` | `payer` | `payee`, `token`, `amount_per_period`, `period_seconds`, `max_periods`, `first_chargeable_at`, `valid_until` |
@@ -55,8 +56,13 @@ Every event emits topics in this order:
 | `recurring` | `Cancelled` | `cancelled` | `cancelled_by` | `periods_charged`, `cancelled_at` |
 | `recurring` | `AmountUpdated` | `amount_updated` | - | `old_amount`, `new_amount`, `effective_from` |
 
-Every contract has at least one event; the five contracts account for 21
+Every contract has at least one event; the five contracts account for 22
 events in total.
+
+`stream` `Created` carries `rate_per_second` and `deposited`, so an indexer can
+rebuild the stream's economics from that event alone. `deposited` always equals
+`rate_per_second * (stop - start)` at creation. The payload layout is pinned by
+`stream_created_payload_lays_out_the_economics` in `tests/tests/event_topics.rs`.
 
 ## Notes for indexers
 

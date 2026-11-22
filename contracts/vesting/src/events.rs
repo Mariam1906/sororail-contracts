@@ -46,3 +46,14 @@ pub struct Revoked {
     pub still_claimable: i128,
     pub revoked_at: u64,
 }
+
+/// Emitted by `contract::transfer_beneficiary` when the beneficiary hands the
+/// grant to a new address. The schedule, `claimed` and `total` are unchanged:
+/// only the address that receives future claims moves.
+#[contractevent(topics = ["vesting", "beneficiary_transferred"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BeneficiaryTransferred {
+    #[topic]
+    pub from: Address,
+    pub to: Address,
+}
