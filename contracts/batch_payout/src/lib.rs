@@ -18,7 +18,7 @@ pub mod types;
 
 pub use contract::{BatchPayoutContract, BatchPayoutContractClient};
 pub use errors::Error;
-pub use types::{Payment, Receipt, MAX_RECIPIENTS};
+pub use types::{EqualSplitReceipt, Payment, Receipt, MAX_RECIPIENTS};
 
 #[cfg(test)]
 mod test;

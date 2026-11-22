@@ -2,9 +2,10 @@
 //!
 //! Follows the org convention in `sororail_common::events`.
 
-use soroban_sdk::{contractevent, Address};
+use soroban_sdk::{contractevent, Address, BytesN};
 
-/// A batch completed. Emitted once per batch, not once per recipient.
+/// A batch completed. Emitted once per batch, not once per recipient, by
+/// `execute`, `execute_equal`, `execute_equal_split` and `execute_weighted`.
 ///
 /// Indexers must correlate the token contract's `transfer` events in the same
 /// transaction to recover each recipient and amount. This event intentionally
@@ -17,6 +18,10 @@ pub struct Executed {
     pub token: Address,
     pub count: u32,
     pub total: i128,
+    /// The caller's per-batch reference (#428), or `None`. Carried in the
+    /// event data rather than as a topic so that the topic layout indexers
+    /// already filter on is the same whether or not a memo is supplied.
+    pub memo: Option<BytesN<32>>,
 }
 
 /// A multi-token batch completed. Emitted once per `execute_many_tokens` call.

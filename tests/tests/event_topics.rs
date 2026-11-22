@@ -326,3 +326,28 @@ fn batch_payout_executed_follows_the_convention() {
         "batch_payout events: {topics:?}"
     );
 }
+
+#[test]
+fn batch_payout_memo_is_event_data_not_a_topic() {
+    // #428: the per-batch memo rides in `Executed`'s data, so the topics
+    // indexers filter on (["batch_payout", "executed", funder]) are identical
+    // whether the memo is `None` or `Some`.
+    let source = fs::read_to_string(workspace_root().join("contracts/batch_payout/src/events.rs"))
+        .expect("batch_payout events.rs is readable");
+    let lines: Vec<&str> = source.lines().map(str::trim).collect();
+    let memo = lines
+        .iter()
+        .position(|l| l.starts_with("pub memo:"))
+        .expect("Executed has a memo field");
+    let attribute = lines[..memo]
+        .iter()
+        .rev()
+        .find(|l| !l.starts_with("///") && !l.starts_with("//"))
+        .expect("memo is inside a struct");
+    assert_ne!(*attribute, "#[topic]", "memo must not be a topic");
+    assert!(
+        lines[memo].contains("Option<BytesN<32>>"),
+        "memo type changed: {}",
+        lines[memo]
+    );
+}

@@ -33,7 +33,7 @@ Every event emits topics in this order:
 
 | Contract | Event | Action topic | `#[topic]` field(s) | Data fields |
 |---|---|---|---|---|
-| `batch_payout` | `Executed` | `executed` | `funder` | `token`, `count`, `total` |
+| `batch_payout` | `Executed` | `executed` | `funder` | `token`, `count`, `total`, `memo` |
 | `batch_payout` | `ExecutedMany` | `executed_many` | `funder` | `count` |
 | `escrow` | `Created` | `created` | `depositor` | `beneficiary`, `token`, `amount`, `deadline` |
 | `escrow` | `Funded` | `funded` | `depositor` | `amount` |
@@ -63,8 +63,11 @@ events in total.
 - **Escrow resolution.** There is no separate full-win event. `Resolved.split_bps`
   is the beneficiary's share: `0` is a full win for the depositor, `10000` a
   full win for the beneficiary. Treat the boundaries as the full-win cases.
-- **Batch payout.** `Executed` covers `execute` / `execute_equal` and fires once
-  per batch, not once per recipient. `ExecutedMany` covers
+- **Batch payout.** `Executed` covers `execute`, `execute_equal`,
+  `execute_equal_split` and `execute_weighted`, and fires once per batch, not
+  once per recipient. `memo` is the caller's optional 32-byte pay-run
+  reference (`Option<BytesN<32>>`); it is data, not a topic, so the topics are
+  the same whether it is `None` or set. `ExecutedMany` covers
   `execute_many_tokens`. Neither duplicates the per-recipient transfers: join
   against the token contract's `transfer` events in the same transaction to
   recover amounts. `ExecutedMany` has no `token` or `total` because a

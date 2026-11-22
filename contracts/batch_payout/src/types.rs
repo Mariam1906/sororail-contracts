@@ -1,4 +1,4 @@
-use soroban_sdk::{contracttype, Address};
+use soroban_sdk::{contracttype, Address, BytesN};
 
 /// Maximum recipients permitted in one batch.
 ///
@@ -69,6 +69,47 @@ pub struct Receipt {
     /// denominators, so treat this field as informational rather than
     /// financially significant.
     pub total: i128,
+    /// The caller's per-batch reference, echoed back unchanged (#428).
+    ///
+    /// An opaque 32 bytes the contract never interprets -- typically a hash or
+    /// id that ties this on-chain batch to an off-chain pay run. It is an
+    /// argument of the entry point, so it is covered by the funder's
+    /// authorization. `None` when the caller supplied none, and always `None`
+    /// from `preview` and `execute_many_tokens`, which take no memo.
+    pub memo: Option<BytesN<32>>,
+}
+
+/// The outcome of an equal split of a `total`, from `execute_equal_split` and
+/// `preview_equal`.
+///
+/// Both entry points return this one shape, computed by the same helper, so a
+/// preview that succeeds reports exactly what the execution will pay.
+///
+/// # The dust rule
+///
+/// `amount_each = total / count` (integer division, truncating) and
+/// `dust = total - amount_each * count`, so `0 <= dust < count`. Every
+/// recipient receives `amount_each`; the **last** recipient in the list
+/// additionally receives `dust`. The sum of all payouts is therefore exactly
+/// `total`: nothing is rounded away and nothing stays with the funder.
+///
+/// When `total < count`, `amount_each` is `0` and the whole `total` is dust
+/// paid to the last recipient. Zero-amount lines move no tokens but still
+/// count in `count`.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EqualSplitReceipt {
+    /// How many recipient lines the batch contained.
+    pub count: u32,
+    /// The sum moved: always exactly the `total` the caller asked to split.
+    pub total: i128,
+    /// What every recipient receives, before dust.
+    pub amount_each: i128,
+    /// The remainder of `total / count`, paid on top to the last recipient.
+    pub dust: i128,
+    /// The caller's per-batch reference; see [`Receipt::memo`]. Always `None`
+    /// from `preview_equal`.
+    pub memo: Option<BytesN<32>>,
 }
 
 // There was a `pub type Payments = Vec<Payment>` alias here, used in the

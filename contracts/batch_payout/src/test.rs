@@ -5,7 +5,7 @@
 use soroban_sdk::{
     testutils::{Address as _, AuthorizedFunction, AuthorizedInvocation, Auths as _, Events as _},
     token::{StellarAssetClient, TokenClient},
-    vec, Address, Env, Event, IntoVal, Vec,
+    vec, Address, BytesN, Env, Event, IntoVal, Symbol, Vec,
 };
 use sororail_common::{
     testutils::{assert_conserved, TestEnv},
@@ -15,7 +15,7 @@ use sororail_common::{
 use crate::{
     contract::{BatchPayoutContract, BatchPayoutContractClient},
     events::{Executed, ExecutedMany},
-    types::{MultiTokenPayment, Payment, Receipt, MAX_RECIPIENTS},
+    types::{EqualSplitReceipt, MultiTokenPayment, Payment, Receipt, MAX_RECIPIENTS},
 };
 
 const MINT: i128 = 1_000_000_000;
@@ -89,7 +89,7 @@ fn execute_pays_each_recipient_their_own_amount() {
 
     let receipt = f
         .client
-        .execute(&f.funder, &f.token.address, &batch, &false);
+        .execute(&f.funder, &f.token.address, &batch, &false, &None);
     // Capture immediately: subsequent token balance invocations replace the
     // events returned by `events().all()`.
     let all = f.env.events().all();
@@ -98,7 +98,8 @@ fn execute_pays_each_recipient_their_own_amount() {
         receipt,
         Receipt {
             count: 3,
-            total: 357
+            total: 357,
+            memo: None,
         }
     );
     assert_eq!(f.token.balance(&a), 100);
@@ -127,6 +128,7 @@ fn execute_pays_each_recipient_their_own_amount() {
         token: f.token.address.clone(),
         count: 3,
         total: 357,
+        memo: None,
     };
     assert_eq!(executed_event, &expected.to_xdr(&f.env, &f.client.address));
 }
@@ -148,13 +150,14 @@ fn execute_emits_the_total_and_recipient_count() {
     ];
 
     f.client
-        .execute(&f.funder, &f.token.address, &payments, &false);
+        .execute(&f.funder, &f.token.address, &payments, &false, &None);
 
     let expected = Executed {
         funder: f.funder,
         token: f.token.address,
         count: 2,
         total: 1_000,
+        memo: None,
     };
     let all = f.env.events().all();
     let events = all.events();
@@ -170,7 +173,7 @@ fn execute_leaves_no_token_balance_on_the_contract() {
     let payments = f.payments(3, 37);
 
     f.client
-        .execute(&f.funder, &f.token.address, &payments, &false);
+        .execute(&f.funder, &f.token.address, &payments, &false, &None);
 
     assert_eq!(f.token.balance(&f.client.address), 0);
 }
@@ -181,7 +184,7 @@ fn execute_rejects_an_empty_batch() {
     let empty: Vec<Payment> = Vec::new(&f.env);
     assert_eq!(
         f.client
-            .try_execute(&f.funder, &f.token.address, &empty, &false),
+            .try_execute(&f.funder, &f.token.address, &empty, &false, &None),
         Err(Ok(Error::BatchEmpty))
     );
 }
@@ -192,7 +195,7 @@ fn execute_rejects_a_batch_over_the_cap() {
     let batch = f.payments(MAX_RECIPIENTS + 1, 1);
     assert_eq!(
         f.client
-            .try_execute(&f.funder, &f.token.address, &batch, &false),
+            .try_execute(&f.funder, &f.token.address, &batch, &false, &None),
         Err(Ok(Error::BatchTooLarge))
     );
 }
@@ -216,7 +219,7 @@ fn execute_rejects_non_positive_amounts_before_paying_anyone() {
         ];
         assert_eq!(
             f.client
-                .try_execute(&f.funder, &f.token.address, &batch, &false),
+                .try_execute(&f.funder, &f.token.address, &batch, &false, &None),
             Err(Ok(Error::InvalidAmount)),
             "amount {bad_amount} was accepted"
         );
@@ -245,7 +248,7 @@ fn execute_rejects_a_zero_amount_payment_inside_a_larger_batch() {
 
     assert_eq!(
         f.client
-            .try_execute(&f.funder, &f.token.address, &batch, &false),
+            .try_execute(&f.funder, &f.token.address, &batch, &false, &None),
         Err(Ok(Error::InvalidAmount))
     );
     // All-or-nothing: none of the four otherwise-valid lines were paid either.
@@ -290,7 +293,7 @@ fn execute_rejects_a_total_that_overflows() {
     ];
     assert_eq!(
         f.client
-            .try_execute(&f.funder, &f.token.address, &batch, &false),
+            .try_execute(&f.funder, &f.token.address, &batch, &false, &None),
         Err(Ok(Error::Overflow))
     );
 }
@@ -316,7 +319,7 @@ fn a_batch_the_funder_cannot_afford_pays_nobody() {
 
     assert!(f
         .client
-        .try_execute(&f.funder, &f.token.address, &batch, &false)
+        .try_execute(&f.funder, &f.token.address, &batch, &false, &None)
         .is_err());
     assert_eq!(f.token.balance(&a), 0, "a partial payout survived");
     assert_eq!(f.token.balance(&b), 0);
@@ -349,7 +352,7 @@ fn paying_the_same_address_twice_is_allowed() {
     ];
     let receipt = f
         .client
-        .execute(&f.funder, &f.token.address, &batch, &false);
+        .execute(&f.funder, &f.token.address, &batch, &false, &None);
     assert_eq!(receipt.total, 150);
     assert_eq!(f.token.balance(&a), 150);
 }
@@ -385,12 +388,13 @@ fn duplicate_recipients_are_each_paid_and_counted_in_the_receipt() {
 
     let receipt = f
         .client
-        .execute(&f.funder, &f.token.address, &batch, &false);
+        .execute(&f.funder, &f.token.address, &batch, &false, &None);
     assert_eq!(
         receipt,
         Receipt {
             count: 3,
-            total: 175
+            total: 175,
+            memo: None,
         }
     );
     // Both lines for the duplicate address arrived, summed.
@@ -408,14 +412,15 @@ fn execute_equal_pays_a_duplicate_recipient_once_per_line() {
     let dup = Address::generate(&f.env);
     let recipients = vec![&f.env, dup.clone(), dup.clone()];
 
-    let receipt = f
-        .client
-        .execute_equal(&f.funder, &f.token.address, &recipients, &40, &false);
+    let receipt =
+        f.client
+            .execute_equal(&f.funder, &f.token.address, &recipients, &40, &false, &None);
     assert_eq!(
         receipt,
         Receipt {
             count: 2,
-            total: 80
+            total: 80,
+            memo: None,
         }
     );
     assert_eq!(f.token.balance(&dup), 80);
@@ -437,7 +442,7 @@ fn execute_requires_the_funders_authorization() {
             amount: 100,
         },
     ];
-    client.execute(&funder, &token, &batch, &false);
+    client.execute(&funder, &token, &batch, &false, &None);
 }
 
 #[test]
@@ -453,7 +458,7 @@ fn execute_rejects_payment_to_contract_address() {
     ];
     assert_eq!(
         f.client
-            .try_execute(&f.funder, &f.token.address, &batch, &false),
+            .try_execute(&f.funder, &f.token.address, &batch, &false, &None),
         Err(Ok(Error::IdenticalParties))
     );
 }
@@ -483,7 +488,7 @@ fn execute_rejects_multiple_invalid_args_in_order() {
     let empty_batch: Vec<Payment> = Vec::new(&f.env);
     assert_eq!(
         f.client
-            .try_execute(&f.funder, &f.token.address, &empty_batch, &false),
+            .try_execute(&f.funder, &f.token.address, &empty_batch, &false, &None),
         Err(Ok(Error::BatchEmpty))
     );
 
@@ -497,7 +502,7 @@ fn execute_rejects_multiple_invalid_args_in_order() {
     ];
     assert_eq!(
         f.client
-            .try_execute(&f.funder, &f.token.address, &batch, &false),
+            .try_execute(&f.funder, &f.token.address, &batch, &false, &None),
         Err(Ok(Error::IdenticalParties))
     );
 }
@@ -508,15 +513,21 @@ fn execute_rejects_multiple_invalid_args_in_order() {
 fn execute_equal_pays_everyone_the_same() {
     let f = Fixture::new();
     let recipients = f.addresses(5);
-    let receipt = f
-        .client
-        .execute_equal(&f.funder, &f.token.address, &recipients, &200, &false);
+    let receipt = f.client.execute_equal(
+        &f.funder,
+        &f.token.address,
+        &recipients,
+        &200,
+        &false,
+        &None,
+    );
 
     assert_eq!(
         receipt,
         Receipt {
             count: 5,
-            total: 1_000
+            total: 1_000,
+            memo: None,
         }
     );
     for r in recipients.iter() {
@@ -530,15 +541,16 @@ fn execute_equal_applies_the_exact_amount_without_rounding() {
     let f = Fixture::new();
     let recipients = f.addresses(3);
 
-    let receipt = f
-        .client
-        .execute_equal(&f.funder, &f.token.address, &recipients, &7, &false);
+    let receipt =
+        f.client
+            .execute_equal(&f.funder, &f.token.address, &recipients, &7, &false, &None);
 
     assert_eq!(
         receipt,
         Receipt {
             count: 3,
-            total: 21
+            total: 21,
+            memo: None,
         }
     );
     for recipient in recipients.iter() {
@@ -552,8 +564,14 @@ fn execute_equal_rejects_a_non_positive_amount() {
     let recipients = f.addresses(3);
     for bad in [0i128, -1, i128::MIN] {
         assert_eq!(
-            f.client
-                .try_execute_equal(&f.funder, &f.token.address, &recipients, &bad, &false),
+            f.client.try_execute_equal(
+                &f.funder,
+                &f.token.address,
+                &recipients,
+                &bad,
+                &false,
+                &None
+            ),
             Err(Ok(Error::InvalidAmount)),
             "amount {bad} was accepted"
         );
@@ -566,7 +584,7 @@ fn execute_equal_rejects_an_empty_batch() {
     let empty: Vec<Address> = Vec::new(&f.env);
     assert_eq!(
         f.client
-            .try_execute_equal(&f.funder, &f.token.address, &empty, &100, &false),
+            .try_execute_equal(&f.funder, &f.token.address, &empty, &100, &false, &None),
         Err(Ok(Error::BatchEmpty))
     );
 }
@@ -577,7 +595,7 @@ fn execute_equal_rejects_a_batch_over_the_cap() {
     let recipients = f.addresses(MAX_RECIPIENTS + 1);
     assert_eq!(
         f.client
-            .try_execute_equal(&f.funder, &f.token.address, &recipients, &1, &false),
+            .try_execute_equal(&f.funder, &f.token.address, &recipients, &1, &false, &None),
         Err(Ok(Error::BatchTooLarge))
     );
 }
@@ -589,8 +607,14 @@ fn execute_equal_rejects_contract_address_in_recipients() {
     let mut recipients = f.addresses(2);
     recipients.push_back(contract);
     assert_eq!(
-        f.client
-            .try_execute_equal(&f.funder, &f.token.address, &recipients, &100, &false),
+        f.client.try_execute_equal(
+            &f.funder,
+            &f.token.address,
+            &recipients,
+            &100,
+            &false,
+            &None
+        ),
         Err(Ok(Error::IdenticalParties))
     );
 }
@@ -601,8 +625,14 @@ fn execute_equal_rejects_multiple_invalid_args_in_order() {
     let contract = f.client.address.clone();
     // Non-positive amount comes before size check
     assert_eq!(
-        f.client
-            .try_execute_equal(&f.funder, &f.token.address, &f.addresses(0), &0, &false),
+        f.client.try_execute_equal(
+            &f.funder,
+            &f.token.address,
+            &f.addresses(0),
+            &0,
+            &false,
+            &None
+        ),
         Err(Ok(Error::InvalidAmount))
     );
 
@@ -611,15 +641,21 @@ fn execute_equal_rejects_multiple_invalid_args_in_order() {
     oversized.push_back(contract.clone());
     assert_eq!(
         f.client
-            .try_execute_equal(&f.funder, &f.token.address, &oversized, &100, &false),
+            .try_execute_equal(&f.funder, &f.token.address, &oversized, &100, &false, &None),
         Err(Ok(Error::BatchTooLarge))
     );
 
     // Self-payment check comes before total calculation
     let recipients = vec![&f.env, contract];
     assert_eq!(
-        f.client
-            .try_execute_equal(&f.funder, &f.token.address, &recipients, &i128::MAX, &false),
+        f.client.try_execute_equal(
+            &f.funder,
+            &f.token.address,
+            &recipients,
+            &i128::MAX,
+            &false,
+            &None
+        ),
         Err(Ok(Error::IdenticalParties))
     );
 }
@@ -629,8 +665,14 @@ fn execute_equal_rejects_a_total_that_overflows() {
     let f = Fixture::new();
     let recipients = f.addresses(2);
     assert_eq!(
-        f.client
-            .try_execute_equal(&f.funder, &f.token.address, &recipients, &i128::MAX, &false),
+        f.client.try_execute_equal(
+            &f.funder,
+            &f.token.address,
+            &recipients,
+            &i128::MAX,
+            &false,
+            &None
+        ),
         Err(Ok(Error::Overflow))
     );
 }
@@ -646,7 +688,8 @@ fn preview_totals_without_moving_anything() {
         receipt,
         Receipt {
             count: 4,
-            total: 100
+            total: 100,
+            memo: None,
         }
     );
     assert_eq!(f.token.balance(&f.funder), MINT);
@@ -684,7 +727,8 @@ fn preview_returns_the_correct_receipt_and_moves_nothing() {
         receipt,
         Receipt {
             count: 3,
-            total: 66
+            total: 66,
+            memo: None,
         }
     );
 
@@ -737,9 +781,9 @@ fn max_recipients_is_reported_to_clients() {
 fn a_full_size_batch_executes() {
     let f = Fixture::new();
     let recipients = f.addresses(MAX_RECIPIENTS);
-    let receipt = f
-        .client
-        .execute_equal(&f.funder, &f.token.address, &recipients, &10, &false);
+    let receipt =
+        f.client
+            .execute_equal(&f.funder, &f.token.address, &recipients, &10, &false, &None);
     assert_eq!(receipt.count, MAX_RECIPIENTS);
     assert_eq!(receipt.total, 10 * i128::from(MAX_RECIPIENTS));
 }
@@ -772,7 +816,7 @@ fn largest_batch_that_executes(candidates: &[u32]) -> Option<u32> {
             }
             // Call the entry point directly, bypassing MAX_RECIPIENTS, so the
             // probe measures resources rather than our own cap.
-            client.execute_equal(&funder, &token, &recipients, &1, &false);
+            client.execute_equal(&funder, &token, &recipients, &1, &false, &None);
         }))
         .is_ok();
 
@@ -833,7 +877,7 @@ fn execute_records_the_exact_authorised_invocation() {
     ];
 
     f.client
-        .execute(&f.funder, &f.token.address, &batch, &false);
+        .execute(&f.funder, &f.token.address, &batch, &false, &None);
 
     assert_eq!(
         f.env.auths(),
@@ -843,7 +887,14 @@ fn execute_records_the_exact_authorised_invocation() {
                 function: AuthorizedFunction::Contract((
                     f.client.address.clone(),
                     soroban_sdk::symbol_short!("execute"),
-                    (&f.funder, &f.token.address, &batch, &false).into_val(&f.env),
+                    (
+                        &f.funder,
+                        &f.token.address,
+                        &batch,
+                        &false,
+                        &None::<BytesN<32>>
+                    )
+                        .into_val(&f.env),
                 )),
                 sub_invocations: std::vec![AuthorizedInvocation {
                     function: AuthorizedFunction::Contract((
@@ -865,8 +916,14 @@ fn execute_equal_records_the_exact_authorised_invocation() {
     let to = Address::generate(&f.env);
     let recipients = vec![&f.env, to.clone()];
 
-    f.client
-        .execute_equal(&f.funder, &f.token.address, &recipients, &200, &false);
+    f.client.execute_equal(
+        &f.funder,
+        &f.token.address,
+        &recipients,
+        &200,
+        &false,
+        &None,
+    );
 
     assert_eq!(
         f.env.auths(),
@@ -876,7 +933,15 @@ fn execute_equal_records_the_exact_authorised_invocation() {
                 function: AuthorizedFunction::Contract((
                     f.client.address.clone(),
                     soroban_sdk::symbol_short!("execute_equal"),
-                    (&f.funder, &f.token.address, &recipients, &200_i128, &false).into_val(&f.env),
+                    (
+                        &f.funder,
+                        &f.token.address,
+                        &recipients,
+                        &200_i128,
+                        &false,
+                        &None::<BytesN<32>>
+                    )
+                        .into_val(&f.env),
                 )),
                 sub_invocations: std::vec![AuthorizedInvocation {
                     function: AuthorizedFunction::Contract((
@@ -953,7 +1018,7 @@ fn execute_rejects_contract_recipient_when_only_eoa_is_set() {
     ];
     assert_eq!(
         f.client
-            .try_execute(&f.funder, &f.token.address, &batch, &true),
+            .try_execute(&f.funder, &f.token.address, &batch, &true, &None),
         Err(Ok(Error::BatchRecipientIsContract))
     );
     // The same batch succeeds when only_eoa is false.
@@ -961,7 +1026,7 @@ fn execute_rejects_contract_recipient_when_only_eoa_is_set() {
     // the validation itself passes; we only check the error type here.)
     let _ = f
         .client
-        .try_execute(&f.funder, &f.token.address, &batch, &false);
+        .try_execute(&f.funder, &f.token.address, &batch, &false, &None);
     _ = contract_recipient; // silence unused warning
 }
 
@@ -970,7 +1035,9 @@ fn execute_allows_account_recipients_when_only_eoa_is_set() {
     let f = Fixture::new();
     let batch = f.payments(2, 50);
     // With only_eoa=true, normal account recipients should still work.
-    let receipt = f.client.execute(&f.funder, &f.token.address, &batch, &true);
+    let receipt = f
+        .client
+        .execute(&f.funder, &f.token.address, &batch, &true, &None);
     assert_eq!(receipt.count, 2);
     assert_eq!(receipt.total, 100);
 }
@@ -982,7 +1049,7 @@ fn execute_equal_rejects_contract_recipient_when_only_eoa_is_set() {
     let recipients = vec![&f.env, other_contract];
     assert_eq!(
         f.client
-            .try_execute_equal(&f.funder, &f.token.address, &recipients, &100, &true),
+            .try_execute_equal(&f.funder, &f.token.address, &recipients, &100, &true, &None),
         Err(Ok(Error::BatchRecipientIsContract))
     );
 }
@@ -991,9 +1058,9 @@ fn execute_equal_rejects_contract_recipient_when_only_eoa_is_set() {
 fn execute_equal_allows_account_recipients_when_only_eoa_is_set() {
     let f = Fixture::new();
     let recipients = f.addresses(3);
-    let receipt = f
-        .client
-        .execute_equal(&f.funder, &f.token.address, &recipients, &10, &true);
+    let receipt =
+        f.client
+            .execute_equal(&f.funder, &f.token.address, &recipients, &10, &true, &None);
     assert_eq!(receipt.count, 3);
 }
 
@@ -1031,7 +1098,7 @@ fn only_eoa_check_comes_after_identical_parties_check() {
     ];
     assert_eq!(
         f.client
-            .try_execute(&f.funder, &f.token.address, &batch, &true),
+            .try_execute(&f.funder, &f.token.address, &batch, &true, &None),
         Err(Ok(Error::IdenticalParties))
     );
 }
@@ -1071,7 +1138,8 @@ fn execute_many_tokens_pays_each_recipient_from_their_own_token() {
         receipt,
         Receipt {
             count: 2,
-            total: 800
+            total: 800,
+            memo: None,
         }
     );
     assert_eq!(token_a_client.balance(&a), 300);
@@ -1243,4 +1311,419 @@ fn execute_many_tokens_uses_all_or_nothing_semantics() {
     // The first transfer was reverted along with the failed second one.
     assert_eq!(token_a_client.balance(&a), 0, "partial payout survived");
     assert_eq!(token_a_client.balance(&funder), MINT);
+}
+
+// --------------------------------------------- shared helpers for #424-#429
+
+fn memo(env: &Env, byte: u8) -> Option<BytesN<32>> {
+    Some(BytesN::from_array(env, &[byte; 32]))
+}
+
+/// Seeded xorshift, as in `sororail_common::math`'s property tests: no new
+/// dependency, fully deterministic.
+struct Xorshift(u64);
+
+impl Xorshift {
+    fn next_u64(&mut self) -> u64 {
+        let mut x = self.0;
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        self.0 = x;
+        x
+    }
+
+    /// Uniform in `[lo, hi]`.
+    fn next_in(&mut self, lo: u64, hi: u64) -> u64 {
+        lo + self.next_u64() % (hi - lo + 1)
+    }
+}
+
+// ------------------------------------------------- #424: execute_weighted
+
+fn shares_of(env: &Env, bps: &[u32]) -> Vec<(Address, u32)> {
+    let mut v = Vec::new(env);
+    for b in bps {
+        v.push_back((Address::generate(env), *b));
+    }
+    v
+}
+
+#[test]
+fn execute_weighted_pays_by_share_and_gives_dust_to_the_last_recipient() {
+    let f = Fixture::new();
+    let shares = shares_of(&f.env, &[3_333, 3_333, 3_334]);
+
+    let receipt =
+        f.client
+            .execute_weighted(&f.funder, &f.token.address, &1_001, &shares, &false, &None);
+    let all = f.env.events().all();
+    let events = all.events();
+
+    assert_eq!(
+        receipt,
+        Receipt {
+            count: 3,
+            total: 1_001,
+            memo: None,
+        }
+    );
+    // 1001 * 3333 / 10000 = 333.63 -> 333 for the first two; the last takes
+    // 1001 - 666 = 335, absorbing the truncation dust.
+    assert_eq!(f.token.balance(&shares.get(0).unwrap().0), 333);
+    assert_eq!(f.token.balance(&shares.get(1).unwrap().0), 333);
+    assert_eq!(f.token.balance(&shares.get(2).unwrap().0), 335);
+    assert_eq!(f.token.balance(&f.funder), MINT - 1_001);
+    assert_eq!(f.token.balance(&f.client.address), 0);
+
+    let expected = Executed {
+        funder: f.funder.clone(),
+        token: f.token.address.clone(),
+        count: 3,
+        total: 1_001,
+        memo: None,
+    };
+    assert_eq!(
+        events.last().expect("no events emitted"),
+        &expected.to_xdr(&f.env, &f.client.address)
+    );
+}
+
+#[test]
+fn execute_weighted_rejects_shares_not_summing_to_10_000() {
+    let f = Fixture::new();
+    for bad in [
+        std::vec![9_999u32],
+        std::vec![10_001],
+        std::vec![5_000, 4_999],
+        std::vec![5_000, 5_001],
+        std::vec![0],
+        // Overflows u32 when summed; must still be InvalidBasisPoints.
+        std::vec![u32::MAX, 10_001],
+    ] {
+        let shares = shares_of(&f.env, &bad);
+        assert_eq!(
+            f.client.try_execute_weighted(
+                &f.funder,
+                &f.token.address,
+                &1_000,
+                &shares,
+                &false,
+                &None,
+            ),
+            Err(Ok(Error::InvalidBasisPoints)),
+            "shares {bad:?}"
+        );
+    }
+    assert_eq!(f.token.balance(&f.funder), MINT);
+}
+
+#[test]
+fn execute_weighted_rejects_invalid_batches_before_moving_anything() {
+    let f = Fixture::new();
+    let ok = shares_of(&f.env, &[10_000]);
+    assert_eq!(
+        f.client
+            .try_execute_weighted(&f.funder, &f.token.address, &0, &ok, &false, &None),
+        Err(Ok(Error::InvalidAmount))
+    );
+
+    let empty: Vec<(Address, u32)> = Vec::new(&f.env);
+    assert_eq!(
+        f.client
+            .try_execute_weighted(&f.funder, &f.token.address, &100, &empty, &false, &None),
+        Err(Ok(Error::BatchEmpty))
+    );
+
+    let mut too_many = Vec::new(&f.env);
+    for _ in 0..=MAX_RECIPIENTS {
+        too_many.push_back((Address::generate(&f.env), 0u32));
+    }
+    assert_eq!(
+        f.client
+            .try_execute_weighted(&f.funder, &f.token.address, &100, &too_many, &false, &None),
+        Err(Ok(Error::BatchTooLarge))
+    );
+
+    let to_self = vec![&f.env, (f.client.address.clone(), 10_000u32)];
+    assert_eq!(
+        f.client
+            .try_execute_weighted(&f.funder, &f.token.address, &100, &to_self, &false, &None),
+        Err(Ok(Error::IdenticalParties))
+    );
+    assert_eq!(f.token.balance(&f.funder), MINT);
+}
+
+#[test]
+fn execute_weighted_zero_share_pays_nothing_but_counts() {
+    let f = Fixture::new();
+    let shares = shares_of(&f.env, &[0, 10_000]);
+    let receipt =
+        f.client
+            .execute_weighted(&f.funder, &f.token.address, &500, &shares, &false, &None);
+    assert_eq!(receipt.count, 2);
+    assert_eq!(f.token.balance(&shares.get(0).unwrap().0), 0);
+    assert_eq!(f.token.balance(&shares.get(1).unwrap().0), 500);
+}
+
+/// Property: for any total and any basis-point partition summing to 10_000,
+/// the payouts sum to exactly `total` (checked by balances), and the receipt
+/// reports `total`.
+#[test]
+fn execute_weighted_payouts_always_sum_to_total() {
+    let mut rng = Xorshift(0x424_u64.wrapping_mul(0x9e37_79b9_7f4a_7c15));
+    for _ in 0..64 {
+        let f = Fixture::new();
+        let n = rng.next_in(1, 12) as usize;
+        let total = rng.next_in(1, MINT as u64) as i128;
+
+        // n - 1 random cut points in [0, 10_000] give n shares summing to 10_000.
+        let mut cuts: std::vec::Vec<u32> =
+            (0..n - 1).map(|_| rng.next_in(0, 10_000) as u32).collect();
+        cuts.sort_unstable();
+        let mut bps = std::vec::Vec::with_capacity(n);
+        let mut prev = 0u32;
+        for c in cuts {
+            bps.push(c - prev);
+            prev = c;
+        }
+        bps.push(10_000 - prev);
+
+        let shares = shares_of(&f.env, &bps);
+        let receipt =
+            f.client
+                .execute_weighted(&f.funder, &f.token.address, &total, &shares, &false, &None);
+        assert_eq!(receipt.total, total);
+        assert_eq!(receipt.count, n as u32);
+
+        let mut paid: i128 = 0;
+        for (i, (to, b)) in shares.iter().enumerate() {
+            let got = f.token.balance(&to);
+            if i + 1 < n {
+                assert_eq!(got, total * i128::from(b) / 10_000, "line {i}");
+            }
+            paid += got;
+        }
+        assert_eq!(paid, total, "total {total}, shares {bps:?}");
+        assert_eq!(f.token.balance(&f.funder), MINT - total);
+    }
+}
+
+// ------------------------------------------------------ #428: per-batch memo
+
+#[test]
+fn execute_echoes_the_memo_in_receipt_and_event() {
+    let f = Fixture::new();
+    let m = memo(&f.env, 0xab);
+    let batch = f.payments(2, 50);
+
+    let receipt = f
+        .client
+        .execute(&f.funder, &f.token.address, &batch, &false, &m);
+    let all = f.env.events().all();
+    let events = all.events();
+
+    assert_eq!(
+        receipt,
+        Receipt {
+            count: 2,
+            total: 100,
+            memo: m.clone(),
+        }
+    );
+    let expected = Executed {
+        funder: f.funder.clone(),
+        token: f.token.address.clone(),
+        count: 2,
+        total: 100,
+        memo: m,
+    };
+    let last = events.last().expect("no events emitted");
+    assert_eq!(last, &expected.to_xdr(&f.env, &f.client.address));
+}
+
+#[test]
+fn execute_equal_and_weighted_echo_the_memo() {
+    let f = Fixture::new();
+    let m = memo(&f.env, 7);
+
+    let recipients = f.addresses(2);
+    let r = f
+        .client
+        .execute_equal(&f.funder, &f.token.address, &recipients, &5, &false, &m);
+    assert_eq!(r.memo, m);
+
+    let shares = shares_of(&f.env, &[2_500, 7_500]);
+    let r = f
+        .client
+        .execute_weighted(&f.funder, &f.token.address, &100, &shares, &false, &m);
+    assert_eq!(r.memo, m);
+
+    let r = f
+        .client
+        .execute_equal_split(&f.funder, &f.token.address, &recipients, &11, &false, &m);
+    assert_eq!(r.memo, m);
+}
+
+#[test]
+fn execute_with_a_memo_records_it_in_the_authorised_invocation() {
+    let f = Fixture::new();
+    let m = memo(&f.env, 9);
+    let batch = f.payments(1, 1);
+    f.client
+        .execute(&f.funder, &f.token.address, &batch, &false, &m);
+    let auths = f.env.auths();
+    assert_eq!(
+        auths[0].1.function,
+        AuthorizedFunction::Contract((
+            f.client.address.clone(),
+            Symbol::new(&f.env, "execute"),
+            (&f.funder, &f.token.address, &batch, &false, &m).into_val(&f.env),
+        ))
+    );
+}
+
+// ---------------------------- #429: the equal-split dust rule at the extremes
+
+/// Runs `execute_equal_split` and asserts, from balances alone, that the
+/// recipients received exactly `total` with the dust on the last one.
+fn assert_equal_split_by_balances(n: u32, total: i128) -> EqualSplitReceipt {
+    let f = Fixture::new();
+    let recipients = f.addresses(n);
+    let receipt = f.client.execute_equal_split(
+        &f.funder,
+        &f.token.address,
+        &recipients,
+        &total,
+        &false,
+        &None,
+    );
+    let each = total / i128::from(n);
+    let dust = total % i128::from(n);
+    assert_eq!(receipt.amount_each, each);
+    assert_eq!(receipt.dust, dust);
+    assert_eq!(receipt.total, total);
+    assert_eq!(receipt.count, n);
+
+    let mut sum: i128 = 0;
+    for (i, to) in recipients.iter().enumerate() {
+        let got = f.token.balance(&to);
+        let want = if i + 1 == n as usize {
+            each + dust
+        } else {
+            each
+        };
+        assert_eq!(got, want, "recipient {i} of {n}, total {total}");
+        sum += got;
+    }
+    assert_eq!(sum, total);
+    assert_eq!(f.token.balance(&f.funder), MINT - total);
+    assert_eq!(f.token.balance(&f.client.address), 0);
+    receipt
+}
+
+#[test]
+fn equal_split_one_recipient_takes_everything_with_no_dust() {
+    let r = assert_equal_split_by_balances(1, 1_001);
+    assert_eq!((r.amount_each, r.dust), (1_001, 0));
+}
+
+#[test]
+fn equal_split_at_max_recipients_puts_the_dust_on_the_last() {
+    let n = MAX_RECIPIENTS;
+    let total = 7 * i128::from(n) + i128::from(n - 1);
+    let r = assert_equal_split_by_balances(n, total);
+    assert_eq!((r.amount_each, r.dust), (7, i128::from(n - 1)));
+}
+
+#[test]
+fn equal_split_total_smaller_than_recipient_count_pays_it_all_to_the_last() {
+    let r = assert_equal_split_by_balances(5, 3);
+    assert_eq!((r.amount_each, r.dust), (0, 3));
+    let r = assert_equal_split_by_balances(MAX_RECIPIENTS, 1);
+    assert_eq!((r.amount_each, r.dust), (0, 1));
+}
+
+#[test]
+fn equal_split_exact_division_has_no_dust() {
+    let r = assert_equal_split_by_balances(4, 1_000);
+    assert_eq!((r.amount_each, r.dust), (250, 0));
+}
+
+// ------------------------------------------------------ #425: preview_equal
+
+#[test]
+fn preview_equal_agrees_with_execute_equal_split() {
+    for &n in &[1u32, 2, 3, 7, MAX_RECIPIENTS] {
+        for &total in &[1i128, 2, 7, 39, 40, 41, 1_000, 1_001, 999_999] {
+            let f = Fixture::new();
+            let recipients = f.addresses(n);
+            let preview = f.client.preview_equal(&recipients, &total, &false);
+            assert_eq!(f.token.balance(&f.funder), MINT, "preview moved funds");
+            let executed = f.client.execute_equal_split(
+                &f.funder,
+                &f.token.address,
+                &recipients,
+                &total,
+                &false,
+                &None,
+            );
+            assert_eq!(preview, executed, "n {n}, total {total}");
+            assert_eq!(f.token.balance(&f.funder), MINT - total);
+        }
+    }
+}
+
+#[test]
+fn preview_equal_moves_nothing_and_emits_nothing() {
+    let f = Fixture::new();
+    let recipients = f.addresses(3);
+    let r = f.client.preview_equal(&recipients, &10, &false);
+    assert_eq!(
+        r,
+        EqualSplitReceipt {
+            count: 3,
+            total: 10,
+            amount_each: 3,
+            dust: 1,
+            memo: None,
+        }
+    );
+    assert!(f.env.events().all().events().is_empty());
+    for to in recipients.iter() {
+        assert_eq!(f.token.balance(&to), 0);
+    }
+}
+
+#[test]
+fn preview_equal_rejects_exactly_what_execute_equal_split_rejects() {
+    let f = Fixture::new();
+    let cases: [(Vec<Address>, i128, Error); 4] = [
+        (f.addresses(0), 10, Error::BatchEmpty),
+        (f.addresses(MAX_RECIPIENTS + 1), 10, Error::BatchTooLarge),
+        (f.addresses(2), 0, Error::InvalidAmount),
+        (
+            vec![&f.env, f.client.address.clone()],
+            10,
+            Error::IdenticalParties,
+        ),
+    ];
+    for (recipients, total, err) in cases {
+        assert_eq!(
+            f.client.try_preview_equal(&recipients, &total, &false),
+            Err(Ok(err))
+        );
+        assert_eq!(
+            f.client.try_execute_equal_split(
+                &f.funder,
+                &f.token.address,
+                &recipients,
+                &total,
+                &false,
+                &None,
+            ),
+            Err(Ok(err))
+        );
+    }
+    assert_eq!(f.token.balance(&f.funder), MINT);
 }

@@ -11,6 +11,7 @@
 //! | [`Error::InvalidAmount`] | any non-positive amount in the batch |
 //! | [`Error::IdenticalParties`] | a recipient that is this contract's own address |
 //! | [`Error::Overflow`] | the batch total exceeding `i128` |
+//! | [`Error::InvalidBasisPoints`] | `execute_weighted` shares not summing to exactly `10_000` |
 //!
 //! # What is absent, and why
 //!
@@ -37,8 +38,10 @@
 //! - `InvalidState`, `InvalidTimeRange`, `InvalidDuration`,
 //!   `DeadlineNotReached`, `DeadlinePassed` -- there is no lifecycle and no
 //!   time dependence; every call is a one-shot.
-//! - `InvalidBasisPoints`, `Underflow`, `DivisionByZero` -- the only arithmetic
-//!   is summing positive amounts (and one multiplication in `execute_equal`),
-//!   which can only overflow.
+//! - `Underflow`, `DivisionByZero` -- arithmetic is summing positive amounts,
+//!   one multiplication in `execute_equal`, a division by a non-zero recipient
+//!   count in `execute_equal_split` / `preview_equal`, and `mul_bps` plus a
+//!   subtraction that cannot go negative (shares sum to `10_000`) in
+//!   `execute_weighted`.
 
 pub use sororail_common::Error;
