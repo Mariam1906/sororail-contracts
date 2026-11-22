@@ -184,6 +184,38 @@ impl VestingContract {
         Ok(unvested)
     }
 
+    /// Hands the grant to a new beneficiary, for key rotation or a wallet
+    /// migration. Only the current beneficiary may do this.
+    ///
+    /// The schedule, `claimed` and `remaining` are untouched, so vesting
+    /// continues as before. Every later `claim` pays `new_beneficiary`.
+    /// Tokens already claimed stay with the previous beneficiary.
+    ///
+    /// `new_beneficiary` must differ from both the current beneficiary and the
+    /// grantor, which keeps the `grantor != beneficiary` rule from `create`.
+    /// A revoked grant cannot be transferred.
+    pub fn transfer_beneficiary(env: Env, new_beneficiary: Address) -> Result<(), Error> {
+        let mut grant = storage::load(&env)?;
+        if grant.is_revoked() {
+            return Err(Error::VestingRevoked);
+        }
+        grant.beneficiary.require_auth();
+        if new_beneficiary == grant.beneficiary || new_beneficiary == grant.grantor {
+            return Err(Error::IdenticalParties);
+        }
+
+        let from = grant.beneficiary.clone();
+        grant.beneficiary = new_beneficiary.clone();
+        storage::save(&env, &grant);
+
+        events::BeneficiaryTransferred {
+            from,
+            to: new_beneficiary,
+        }
+        .publish(&env);
+        Ok(())
+    }
+
     /// Total vested as of `at`, whether claimed or not. Pure view.
     pub fn vested_amount(env: Env, at: u64) -> Result<i128, Error> {
         storage::load_view(&env)?.vested_amount(at)

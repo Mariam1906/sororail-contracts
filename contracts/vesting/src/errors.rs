@@ -8,7 +8,7 @@
 //! |---|---|
 //! | [`Error::AlreadyInitialized`] | `create` on an initialized instance |
 //! | [`Error::NotInitialized`] | any entry point before `create` |
-//! | [`Error::IdenticalParties`] | `create` with `grantor == beneficiary` |
+//! | [`Error::IdenticalParties`] | `create` with `grantor == beneficiary`; `transfer_beneficiary` to the current beneficiary or the grantor |
 //! | [`Error::InvalidAmount`] | `create` with a non-positive total |
 //! | [`Error::InvalidDuration`] | `create` with a zero duration |
 //! | [`Error::Overflow`] | proportional vesting math exceeding `i128` |
@@ -16,7 +16,7 @@
 //! | [`Error::VestingCliffNotReached`] | `claim` before `start + cliff` |
 //! | [`Error::VestingNothingToClaim`] | `claim` with nothing vested-but-unclaimed |
 //! | [`Error::VestingNotRevocable`] | `revoke` on a grant created with `revocable = false` |
-//! | [`Error::VestingRevoked`] | `revoke` on an already-revoked grant |
+//! | [`Error::VestingRevoked`] | `revoke` on an already-revoked grant; `transfer_beneficiary` on a revoked grant |
 //!
 //! # What is absent, and why
 //!

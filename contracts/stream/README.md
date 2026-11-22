@@ -22,7 +22,7 @@ withdrawn + refunded + remaining == deposited
 | --- | --- | --- |
 | `create` | sender | Records the stream and pulls the full `deposited` amount in. |
 | `withdraw` | recipient | Pays out accrued, unwithdrawn funds (all of them if `amount` is `None`). |
-| `cancel` | sender | Ends a cancellable stream; returns unaccrued funds to the sender. |
+| `cancel` | sender | Ends a cancellable stream; returns unaccrued funds to the sender. Worked examples: [docs/stream-cancel.md](../../docs/stream-cancel.md). |
 | `top_up` | sender | Adds funds to the deposit. The amount must keep the per-second rate exact. |
 | `extend` | sender | Moves `stop` later and pulls the extra funds the longer span needs. |
 | `balance_of`, `remaining` | anyone | Reads accrued-but-unwithdrawn or unstreamed balances. |

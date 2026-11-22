@@ -54,7 +54,13 @@ struct Fixture<'a> {
 
 impl Fixture<'_> {
     fn new(cancellable: bool) -> Self {
-        let te = TestEnv::at(START);
+        Fixture::with_span(cancellable, START, START, STOP)
+    }
+
+    /// Creates the stream while the ledger reads `now`, which need not equal
+    /// the stream's `start` (e.g. a stream that starts in the future).
+    fn with_span(cancellable: bool, now: u64, start: u64, stop: u64) -> Self {
+        let te = TestEnv::at(now);
         let (token, sender) = te.make_token(MINT);
         let token_address = token.address.clone();
         let recipient = te.make_address();
@@ -67,8 +73,8 @@ impl Fixture<'_> {
             &recipient,
             &token_address,
             &RATE,
-            &START,
-            &STOP,
+            &start,
+            &stop,
             &cancellable,
         );
 
@@ -1848,4 +1854,155 @@ mod fee_on_transfer {
         assert_eq!(fot.balance(&stream.address), gross - gross / 100);
         assert_eq!(fot.balance(&sender), 10_000_000 - gross);
     }
+}
+
+// ------------------------------------------------- withdraw at zero accrual
+
+/// Issue #402: a stream whose `start` is the current ledger time has accrued
+/// nothing. `withdraw(None)` resolves to the zero available amount and is
+/// rejected as `InvalidAmount`; an explicit amount is rejected as
+/// `StreamInsufficientAccrued`. Neither moves funds.
+#[test]
+fn withdraw_none_at_start_equal_to_now_fails_cleanly() {
+    let f = Fixture::new(true);
+    assert_eq!(f.client.balance_of(&f.recipient), 0);
+
+    assert_eq!(f.client.try_withdraw(&None), Err(Ok(Error::InvalidAmount)));
+    assert_eq!(
+        f.client.try_withdraw(&Some(1)),
+        Err(Ok(Error::StreamInsufficientAccrued))
+    );
+
+    assert_eq!(f.token.balance(&f.recipient), 0);
+    assert_eq!(f.held(), DEPOSITED);
+    assert_eq!(f.client.get().withdrawn, 0);
+    f.assert_conserved();
+}
+
+/// Issue #402, mirror case: `start` is still in the future, so the same two
+/// withdrawals fail the same way and nothing moves.
+#[test]
+fn withdraw_none_before_a_future_start_fails_cleanly() {
+    let f = Fixture::with_span(true, START, START + 500, START + 500 + DURATION);
+    assert_eq!(f.client.balance_of(&f.recipient), 0);
+
+    assert_eq!(f.client.try_withdraw(&None), Err(Ok(Error::InvalidAmount)));
+    assert_eq!(
+        f.client.try_withdraw(&Some(1)),
+        Err(Ok(Error::StreamInsufficientAccrued))
+    );
+
+    assert_eq!(f.token.balance(&f.recipient), 0);
+    assert_eq!(f.held(), DEPOSITED);
+    assert_eq!(f.client.get().withdrawn, 0);
+    f.assert_conserved();
+}
+
+// ------------------------------------------- cancel worked examples (#400)
+//
+// Each test backs one worked example in docs/stream-cancel.md. The numbers in
+// the doc are the numbers asserted here; change both together.
+
+/// Worked example 1: cancel mid-stream with no prior withdrawals.
+///
+/// Rate 100/s over 1000 s, so the deposit is 100_000. At `start + 400`,
+/// 40_000 has accrued: 40_000 is settled to the recipient and 60_000 is
+/// refunded to the sender.
+#[test]
+fn cancel_worked_example_1_mid_stream_without_withdrawals() {
+    let f = Fixture::new(true);
+    let sender_before = f.token.balance(&f.sender);
+    f.at(START + 400);
+    f.client.cancel();
+
+    assert_eq!(f.token.balance(&f.recipient), 40_000);
+    assert_eq!(f.token.balance(&f.sender), sender_before + 60_000);
+    let s = f.client.get();
+    assert_eq!(s.withdrawn, 40_000);
+    assert_eq!(s.refunded, 60_000);
+    assert_eq!(s.cancelled_at, Some(START + 400));
+    assert_eq!(f.held(), 0);
+
+    let all = f.env.events().all();
+    let events = all.events();
+    let last = events.last().expect("no events emitted");
+    let expected = Cancelled {
+        sender: f.sender.clone(),
+        settled_to_recipient: 40_000,
+        refunded_to_sender: 60_000,
+        cancelled_at: START + 400,
+    };
+    assert_eq!(last, &expected.to_xdr(&f.env, &f.client.address));
+    f.assert_conserved();
+}
+
+/// Worked example 2: cancel after a partial withdrawal.
+///
+/// At `start + 200`, 20_000 has accrued and the recipient withdraws 10_000.
+/// At `start + 500`, 50_000 has accrued in total, so 40_000 is still
+/// unwithdrawn and is settled by the cancel. Together the recipient receives
+/// 50_000, and the 50_000 that has not accrued is refunded to the sender.
+#[test]
+fn cancel_worked_example_2_after_a_partial_withdrawal() {
+    let f = Fixture::new(true);
+    let sender_before = f.token.balance(&f.sender);
+    f.at(START + 200);
+    assert_eq!(f.client.withdraw(&Some(10_000)), 10_000);
+
+    f.at(START + 500);
+    f.client.cancel();
+
+    assert_eq!(f.token.balance(&f.recipient), 50_000);
+    assert_eq!(f.token.balance(&f.sender), sender_before + 50_000);
+    let s = f.client.get();
+    assert_eq!(s.withdrawn, 50_000);
+    assert_eq!(s.refunded, 50_000);
+
+    let all = f.env.events().all();
+    let events = all.events();
+    let last = events.last().expect("no events emitted");
+    let expected = Cancelled {
+        sender: f.sender.clone(),
+        settled_to_recipient: 40_000,
+        refunded_to_sender: 50_000,
+        cancelled_at: START + 500,
+    };
+    assert_eq!(last, &expected.to_xdr(&f.env, &f.client.address));
+    f.assert_conserved();
+}
+
+/// Worked example 3: cancel after `stop`, with a prior withdrawal.
+///
+/// Accrual halts at `stop`, so the full 100_000 has accrued by `stop + 100`.
+/// 10_000 was withdrawn at `start + 300`, so 90_000 is settled now. Nothing
+/// is left unaccrued, so the sender's refund is zero and the sender's balance
+/// does not change.
+#[test]
+fn cancel_worked_example_3_after_stop_refunds_nothing() {
+    let f = Fixture::new(true);
+    let sender_before = f.token.balance(&f.sender);
+    f.at(START + 300);
+    assert_eq!(f.client.withdraw(&Some(10_000)), 10_000);
+
+    f.at(STOP + 100);
+    f.client.cancel();
+
+    assert_eq!(f.token.balance(&f.recipient), DEPOSITED);
+    assert_eq!(f.token.balance(&f.sender), sender_before);
+    let s = f.client.get();
+    assert_eq!(s.withdrawn, DEPOSITED);
+    assert_eq!(s.refunded, 0);
+    assert_eq!(s.cancelled_at, Some(STOP + 100));
+
+    let all = f.env.events().all();
+    let events = all.events();
+    let last = events.last().expect("no events emitted");
+    let expected = Cancelled {
+        sender: f.sender.clone(),
+        settled_to_recipient: 90_000,
+        refunded_to_sender: 0,
+        cancelled_at: STOP + 100,
+    };
+    assert_eq!(last, &expected.to_xdr(&f.env, &f.client.address));
+    f.assert_conserved();
 }

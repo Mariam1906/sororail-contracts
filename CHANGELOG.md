@@ -23,6 +23,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - SPEC.md "Cross-contract design conventions": when an entry point takes a `caller` argument vs. calling `require_auth` on a fixed party (#63), and when a lifecycle is a `State` enum vs. an optional timestamp (#66).
 - CONTRIBUTING.md "Choosing an authorization pattern" (#63).
 - `vesting::schedule()` view returning the schedule as a list of `Checkpoint { at, vested }` corners (start, cliff, end), so clients can render it without recomputing (#315).
+- `vesting::transfer_beneficiary(new_beneficiary)` for key rotation. Only the current beneficiary may call it. The schedule and `claimed` are unchanged, later claims pay the new address, and it emits `BeneficiaryTransferred`. Rejected on a revoked grant (#403).
+- `docs/stream-cancel.md` with three worked cancel examples. Each example has a test that asserts its numbers (#400).
+- Tests pinning `withdraw` at zero accrual: `None` fails with `InvalidAmount` and an explicit amount with `StreamInsufficientAccrued`, both when `start` equals now and when `start` is in the future (#402).
+- The `stream::Created` payload layout (including `rate_per_second` and `deposited`) is pinned by `tests/tests/event_topics.rs` and documented in `docs/events.md` (#401).
 
 ### Changed
 

@@ -22,6 +22,7 @@ claimed + returned + remaining == total
 | `create` | grantor | Records the schedule and pulls the full `total` amount in. |
 | `claim` | beneficiary | Pays out what has vested and not yet been claimed. |
 | `revoke` | grantor | On a revocable grant, returns the unvested remainder to the grantor. |
+| `transfer_beneficiary` | beneficiary | Hands the grant to a new address for key rotation. The schedule and `claimed` are unchanged; later claims pay the new address. Rejected on a revoked grant. |
 | `vested_amount` | anyone | Vested amount at a given ledger timestamp. |
 | `claimable`, `remaining`, `schedule` | anyone | Current claimable amount, unclaimed balance, and checkpoints. |
 | `bump`, `get` | anyone | Extends TTL; reads the full grant record. |
@@ -62,5 +63,5 @@ Failures use the shared `Error` enum in
 | `VestingCliffNotReached` | `claim` before `start + cliff` |
 | `VestingNothingToClaim` | `claim` with nothing vested-but-unclaimed |
 | `VestingNotRevocable` | `revoke` on a grant created with `revocable = false` |
-| `VestingRevoked` | `revoke` on an already-revoked grant |
+| `VestingRevoked` | `revoke` on an already-revoked grant; `transfer_beneficiary` on a revoked grant |
 | `VestingScheduleOverflow` | `create` with `start + duration` beyond `u64::MAX` |
