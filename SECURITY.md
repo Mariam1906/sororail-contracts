@@ -115,6 +115,30 @@ refund the rest. This path is tested in
 [contracts/stream/src/test.rs](contracts/stream/src/test.rs) and analysed in
 [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md).
 
+### Third-party top-ups (`stream::top_up_from`)
+
+`stream::top_up_from(funder, amount)` lets any address add funds to an existing
+stream. The funder must authorize the token transfer, so no one can pull tokens
+from another account. The funds count toward `deposited` exactly as a sender
+top-up does. Funding confers no rights on the funder:
+
+- **Refunds go to the sender.** Cancellation returns the unaccrued remainder to
+  the sender, including whatever a third party contributed. The funder cannot
+  reclaim it.
+- **No rights over the stream.** The funder cannot withdraw, cancel, extend or
+  transfer the stream. Those calls stay with the recipient and the sender.
+- **The sender can recover it.** A cancellable stream lets the sender take back
+  the unaccrued funds, including a third party's contribution. Treat a
+  third-party funder as trusting the sender, or create the stream as
+  non-cancellable.
+- **Funding is irrevocable by the funder.** Once transferred, the tokens can
+  only leave the contract through accrual to the recipient or the sender's
+  cancellation refund.
+
+Integrators who expose `top_up_from` to a treasury or another wallet should
+state these rules to that wallet's owner. Tests:
+`contracts/stream/src/test.rs` (`top_up_from_*`).
+
 ## Public disclosure and security advisories
 
 Once a vulnerability is fixed and the patched release is published, we will

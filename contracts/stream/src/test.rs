@@ -17,7 +17,7 @@ use sororail_common::{storage::INSTANCE_BUMP, testutils::TestEnv, Error};
 
 use crate::{
     contract::{StreamContract, StreamContractClient},
-    events::{Cancelled, Created, Extended, ToppedUp, Withdrawn},
+    events::{Cancelled, Created, Extended, ToppedUp, ToppedUpFrom, Withdrawn},
     types::Stream,
 };
 
@@ -1259,6 +1259,138 @@ fn top_up_after_cancellation_moves_no_tokens_and_leaves_the_stream_unchanged() {
     assert_eq!(f.token.balance(&f.sender), sender_balance);
 }
 
+// ------------------------------------------------------------- top_up_from
+
+/// Mints `amount` of the fixture's token to a fresh address that is neither
+/// the sender nor the recipient, and returns it.
+fn funded_third_party(f: &Fixture<'_>, amount: i128) -> Address {
+    let funder = Address::generate(&f.env);
+    StellarAssetClient::new(&f.env, &f.token.address).mint(&funder, &amount);
+    funder
+}
+
+#[test]
+fn top_up_from_funds_the_stream_from_a_third_party() {
+    let f = Fixture::new(true);
+    let funder = funded_third_party(&f, RATE * 500);
+    let sender_before = f.token.balance(&f.sender);
+
+    f.client.top_up_from(&funder, &(RATE * 500));
+
+    let s = f.client.get();
+    assert_eq!(s.stop, STOP + 500);
+    assert_eq!(s.deposited, DEPOSITED + RATE * 500);
+    assert_eq!(f.token.balance(&funder), 0);
+    assert_eq!(f.token.balance(&f.sender), sender_before);
+    assert_eq!(f.held(), DEPOSITED + RATE * 500);
+    f.assert_conserved();
+}
+
+/// The funder gains no rights: on cancellation the sender is refunded the
+/// unaccrued remainder, including the funder's contribution.
+#[test]
+fn top_up_from_refunds_the_sender_not_the_funder_on_cancel() {
+    let f = Fixture::new(true);
+    let funder = funded_third_party(&f, RATE * 500);
+    f.client.top_up_from(&funder, &(RATE * 500));
+    let sender_before = f.token.balance(&f.sender);
+
+    f.at(START + 400);
+    f.client.cancel();
+
+    let total = DEPOSITED + RATE * 500;
+    let settled = RATE * 400;
+    let refund = total - settled;
+    assert_eq!(f.token.balance(&f.recipient), settled);
+    assert_eq!(f.token.balance(&f.sender), sender_before + refund);
+    assert_eq!(f.token.balance(&funder), 0);
+    f.assert_conserved();
+}
+
+/// Pins the `ToppedUpFrom` wire shape: attributed to the funder, with the
+/// sender carried as data because it receives any refund.
+#[test]
+fn top_up_from_emits_the_topped_up_from_event() {
+    let f = Fixture::new(true);
+    let funder = funded_third_party(&f, RATE * 500);
+    f.client.top_up_from(&funder, &(RATE * 500));
+
+    // The token transfer event is emitted first, so check the last event.
+    let all = f.env.events().all();
+    let events = all.events();
+    let last = events.last().expect("no events emitted");
+    let expected = ToppedUpFrom {
+        funder: funder.clone(),
+        sender: f.sender.clone(),
+        amount: RATE * 500,
+        new_stop: STOP + 500,
+        deposited: DEPOSITED + RATE * 500,
+    };
+    assert_eq!(last, &expected.to_xdr(&f.env, &f.client.address));
+}
+
+#[test]
+fn top_up_from_rejects_an_amount_that_is_not_a_whole_number_of_seconds() {
+    let f = Fixture::new(true);
+    let funder = funded_third_party(&f, RATE * 500);
+    let before = f.client.get();
+
+    assert_eq!(
+        f.client.try_top_up_from(&funder, &(RATE * 5 + 1)),
+        Err(Ok(Error::InvalidAmount))
+    );
+    assert_eq!(f.client.get(), before);
+    assert_eq!(f.token.balance(&funder), RATE * 500);
+}
+
+#[test]
+fn top_up_from_is_rejected_after_cancellation_and_moves_no_tokens() {
+    let f = Fixture::new(true);
+    f.client.cancel();
+    let funder = funded_third_party(&f, RATE * 100);
+    let held = f.held();
+
+    assert_eq!(
+        f.client.try_top_up_from(&funder, &(RATE * 100)),
+        Err(Ok(Error::StreamCancelled))
+    );
+    assert_eq!(f.held(), held);
+    assert_eq!(f.token.balance(&funder), RATE * 100);
+}
+
+// ----------------------------------------------------------------- has_ended
+
+#[test]
+fn has_ended_view_flips_exactly_at_stop() {
+    let f = Fixture::new(true);
+    f.at(STOP - 1);
+    assert!(!f.client.has_ended());
+    f.at(STOP);
+    assert!(f.client.has_ended());
+    f.at(STOP + 1);
+    assert!(f.client.has_ended());
+}
+
+/// `has_ended` is a clock predicate, so cancelling before `stop` does not
+/// make the stream "ended".
+#[test]
+fn has_ended_view_ignores_cancellation() {
+    let f = Fixture::new(true);
+    f.at(START + 100);
+    f.client.cancel();
+    assert!(!f.client.has_ended());
+}
+
+#[test]
+fn has_ended_view_moves_with_a_top_up() {
+    let f = Fixture::new(true);
+    f.client.top_up(&(RATE * 500));
+    f.at(STOP);
+    assert!(!f.client.has_ended());
+    f.at(STOP + 500);
+    assert!(f.client.has_ended());
+}
+
 // ----------------------------------------------------------------- extend
 
 #[test]
@@ -1606,6 +1738,16 @@ fn extend_requires_the_senders_authorization() {
     // Clear auths so require_auth bites.
     f.env.set_auths(&[]);
     f.client.extend(&(s.stop + 100));
+}
+
+#[test]
+#[should_panic]
+fn top_up_from_requires_the_funders_authorization() {
+    let f = Fixture::new(true);
+    let funder = funded_third_party(&f, RATE * 100);
+    // Clear auths after minting, so only the funder's require_auth can fail.
+    f.env.set_auths(&[]);
+    f.client.top_up_from(&funder, &(RATE * 100));
 }
 
 // ---------------------------------------------------------------- property
@@ -2002,5 +2144,90 @@ fn cancel_worked_example_3_after_stop_refunds_nothing() {
     };
     assert_eq!(last, &expected.to_xdr(&f.env, &f.client.address));
     f.assert_conserved();
+}
+
+// ------------------------------------------------------- budget across length
+
+/// Ten years of 365-day years, in seconds.
+const TEN_YEARS: u64 = 10 * 365 * 24 * 60 * 60;
+
+/// The metered `(cpu_instructions, memory_bytes)` of the last top-level call
+/// made in `env`. The SDK resets metering before each top-level invocation, so
+/// this is the cost of that call alone.
+fn last_call_cost(env: &Env) -> (u64, u64) {
+    let budget = env.cost_estimate().budget();
+    (budget.cpu_instruction_cost(), budget.memory_bytes_cost())
+}
+
+/// Metered costs of `withdraw` and `cancel` on a stream of `duration` seconds,
+/// as `(withdraw, cancel)`.
+///
+/// Both calls run at `stop`, after the whole span has accrued. Each one then
+/// settles the full stream and has nothing left to refund, so a one second
+/// stream and a ten year stream take the same code path and differ only in the
+/// length they accrue over. Each call is made on its own instance.
+fn withdraw_and_cancel_costs(duration: u64) -> ((u64, u64), (u64, u64)) {
+    let te = TestEnv::at(START);
+    let stop = START + duration;
+    let deposited = RATE * i128::from(duration);
+    // Two streams are created from the same sender, so fund both.
+    let (token, sender) = te.make_token(deposited * 2);
+    let token_address = token.address.clone();
+    let recipient = te.make_address();
+    let env = te.env().clone();
+
+    let withdraw_client = StreamContractClient::new(&env, &env.register(StreamContract, ()));
+    withdraw_client.create(
+        &sender,
+        &recipient,
+        &token_address,
+        &RATE,
+        &START,
+        &stop,
+        &true,
+    );
+    let cancel_client = StreamContractClient::new(&env, &env.register(StreamContract, ()));
+    cancel_client.create(
+        &sender,
+        &recipient,
+        &token_address,
+        &RATE,
+        &START,
+        &stop,
+        &true,
+    );
+
+    env.ledger().with_mut(|l| l.timestamp = stop);
+    withdraw_client.withdraw(&None);
+    let withdraw = last_call_cost(&env);
+    cancel_client.cancel();
+    let cancel = last_call_cost(&env);
+    (withdraw, cancel)
+}
+
+/// Fails unless `long` is within 10% of `short`.
+fn assert_within_tolerance(what: &str, short: u64, long: u64) {
+    assert!(
+        short.abs_diff(long) * 10 <= short,
+        "{what} grew with stream length: 1 second = {short}, 10 years = {long}"
+    );
+}
+
+/// Accrual is arithmetic, so `withdraw` and `cancel` must not cost more on a
+/// long stream. A loop over time would make the ten year stream about
+/// 3 * 10^8 times as expensive as the one second stream, far past a 10%
+/// tolerance, so this catches that with a wide margin.
+///
+/// The measured numbers are not recorded in this file. Run the test, and a
+/// failure prints them, or read them from the CI log.
+#[test]
+fn withdraw_and_cancel_cost_does_not_grow_with_stream_length() {
+    let (short_withdraw, short_cancel) = withdraw_and_cancel_costs(1);
+    let (long_withdraw, long_cancel) = withdraw_and_cancel_costs(TEN_YEARS);
+
+    assert_within_tolerance("withdraw cpu", short_withdraw.0, long_withdraw.0);
+    assert_within_tolerance("withdraw mem", short_withdraw.1, long_withdraw.1);
+    assert_within_tolerance("cancel cpu", short_cancel.0, long_cancel.0);
+    assert_within_tolerance("cancel mem", short_cancel.1, long_cancel.1);
 }
 

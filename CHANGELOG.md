@@ -18,6 +18,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   #471).
 - Storage-footprint regression check: stateful contracts retain exactly one
   instance-storage position and batch payout remains stateless (#468).
+- `stream::top_up_from(funder, amount)` lets a third party fund an existing
+  stream. The funder authorizes the transfer, the funds count toward
+  `deposited`, and cancellation still refunds the sender. It emits
+  `ToppedUpFrom` (#397).
+- `stream::has_ended()` view, true once the ledger time reaches `stop`, with
+  boundary tests at `stop - 1`, `stop` and `stop + 1` (#396).
+- Property tests for `Stream::accrued_at`: accrual never decreases over time,
+  never goes negative or exceeds `deposited`, and is zero at `start` (#399).
+- Budget test pinning the CPU and memory cost of `withdraw` and `cancel`
+  within 10% between a one second and a ten year stream, so a loop over time
+  fails CI (#398).
 
 - Workspace test `tests/tests/event_topics.rs` asserting every `#[contractevent]` declares exactly `[<crate name>, <snake_case action>]` topics (#64).
 - SPEC.md "Cross-contract design conventions": when an entry point takes a `caller` argument vs. calling `require_auth` on a fixed party (#63), and when a lifecycle is a `State` enum vs. an optional timestamp (#66).

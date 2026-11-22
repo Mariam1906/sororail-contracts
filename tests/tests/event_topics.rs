@@ -251,6 +251,7 @@ fn every_public_event_has_a_pinned_topic_name() {
         ("stream", "Created", "created"),
         ("stream", "Extended", "extended"),
         ("stream", "ToppedUp", "topped_up"),
+        ("stream", "ToppedUpFrom", "topped_up_from"),
         ("stream", "Withdrawn", "withdrawn"),
         ("vesting", "BeneficiaryTransferred", "beneficiary_transferred"),
         ("vesting", "Claimed", "claimed"),

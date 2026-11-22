@@ -159,6 +159,8 @@ Continuous per-second transfer from sender to recipient.
 - `cancel()` — settles accrued amount to recipient, returns remainder to sender; only if `cancellable`
 - `balance_of(who)` — view; accrued but unwithdrawn
 - `top_up(amount)` / `extend(new_stop)`
+- `top_up_from(funder, amount)` — any address may fund the stream, and the funder authorizes the transfer. Funds count toward `deposited` as with `top_up`. Cancellation still refunds the sender, and the funder gains no rights (see SECURITY.md, "Third-party top-ups").
+- `has_ended()` — view; true once the ledger time reaches `stop`. It ignores cancellation.
 - Accrual is computed from ledger timestamp at read time. Never write per-second state.
 - The critical correctness property: withdrawn + refunded + remaining always equals deposited, exactly, with no rounding leakage. Test this as an invariant.
 - The stream is fully funded for its whole declared span, so `deposited == rate * (stop - start)` always holds. `top_up` therefore rejects an amount that is not a whole number of seconds rather than stranding the remainder.
@@ -257,8 +259,9 @@ Every public function, and which address(es) may call it. "—" means the functi
 | `stream`       | `withdraw`              | recipient                                                       |
 | `stream`       | `cancel`                | sender                                                          |
 | `stream`       | `top_up`                | sender                                                          |
+| `stream`       | `top_up_from`           | funder (any address; it must authorize the transfer)            |
 | `stream`       | `extend`                | sender                                                          |
-| `stream`       | `balance_of`, `remaining`, `bump`, `get` | —                                               |
+| `stream`       | `balance_of`, `remaining`, `has_ended`, `bump`, `get` | —                                  |
 | `vesting`      | `create`                | grantor                                                         |
 | `vesting`      | `claim`                 | beneficiary                                                     |
 | `vesting`      | `revoke`                | grantor                                                         |

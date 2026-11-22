@@ -164,22 +164,44 @@ impl StreamContract {
             return Err(Error::StreamCancelled);
         }
         stream.sender.require_auth();
-        math::require_positive(amount)?;
-        if amount.checked_rem(stream.rate_per_second) != Some(0) {
-            return Err(Error::InvalidAmount);
-        }
-
-        let seconds = u64::try_from(math::div(amount, stream.rate_per_second)?)
-            .map_err(|_| Error::InvalidTimeRange)?;
-        stream.stop = stream
-            .stop
-            .checked_add(seconds)
-            .ok_or(Error::InvalidTimeRange)?;
-        stream.deposited = math::add(stream.deposited, amount)?;
+        Self::extend_by_funding(&mut stream, amount)?;
         storage::save(&env, &stream);
 
         Self::pull(&env, &stream, amount);
         events::ToppedUp {
+            sender: stream.sender.clone(),
+            amount,
+            new_stop: stream.stop,
+            deposited: stream.deposited,
+        }
+        .publish(&env);
+        Ok(())
+    }
+
+    /// Adds funds on behalf of a third party, who authorizes the transfer.
+    ///
+    /// Same accounting as [`StreamContract::top_up`]: `amount` must be an exact
+    /// multiple of `rate_per_second`, `stop` moves later by the seconds it buys,
+    /// and `deposited` grows by `amount`.
+    ///
+    /// Any address may fund a stream, so `funder` has no membership to check.
+    /// It only has to authorize the transfer of its own tokens.
+    ///
+    /// Funding confers no rights. Cancellation still refunds the sender, and the
+    /// funder cannot withdraw, cancel or reclaim anything afterwards. See the
+    /// "Third-party top-ups" section of SECURITY.md.
+    pub fn top_up_from(env: Env, funder: Address, amount: i128) -> Result<(), Error> {
+        let mut stream = storage::load(&env)?;
+        if stream.is_cancelled() {
+            return Err(Error::StreamCancelled);
+        }
+        funder.require_auth();
+        Self::extend_by_funding(&mut stream, amount)?;
+        storage::save(&env, &stream);
+
+        Self::pull_from(&env, &stream, &funder, amount);
+        events::ToppedUpFrom {
+            funder,
             sender: stream.sender.clone(),
             amount,
             new_stop: stream.stop,
@@ -242,6 +264,13 @@ impl StreamContract {
         storage::load_view(&env)?.remaining()
     }
 
+    /// Whether accrual has reached `stop` as of the ledger time. Cancellation is
+    /// not considered here; use `get` and check `cancelled_at` for that.
+    pub fn has_ended(env: Env) -> Result<bool, Error> {
+        let stream = storage::load_view(&env)?;
+        Ok(stream.has_ended(env.ledger().timestamp()))
+    }
+
     /// Extends the instance TTL for a long-lived stream without changing it.
     pub fn bump(env: Env) -> Result<(), Error> {
         storage::load_view(&env)?;
@@ -289,11 +318,37 @@ impl StreamContract {
 
 // Helpers. Outside `#[contractimpl]` so they are not contract entry points.
 impl StreamContract {
+    /// The funding arithmetic shared by `top_up` and `top_up_from`.
+    ///
+    /// Checks the amount, then moves `stop` later by the seconds it buys and
+    /// adds it to `deposited`. Operates on the in-memory record only, so an
+    /// error leaves storage untouched.
+    fn extend_by_funding(stream: &mut Stream, amount: i128) -> Result<(), Error> {
+        math::require_positive(amount)?;
+        if amount.checked_rem(stream.rate_per_second) != Some(0) {
+            return Err(Error::InvalidAmount);
+        }
+
+        let seconds = u64::try_from(math::div(amount, stream.rate_per_second)?)
+            .map_err(|_| Error::InvalidTimeRange)?;
+        stream.stop = stream
+            .stop
+            .checked_add(seconds)
+            .ok_or(Error::InvalidTimeRange)?;
+        stream.deposited = math::add(stream.deposited, amount)?;
+        Ok(())
+    }
+
     /// Pulls `amount` of the streamed token from the sender into this contract.
     fn pull(env: &Env, stream: &Stream, amount: i128) {
+        Self::pull_from(env, stream, &stream.sender, amount);
+    }
+
+    /// Pulls `amount` of the streamed token from `from` into this contract.
+    fn pull_from(env: &Env, stream: &Stream, from: &Address, amount: i128) {
         debug_assert!(amount > 0, "pull requires a positive amount");
         token::TokenClient::new(env, &stream.token).transfer(
-            &stream.sender,
+            from,
             env.current_contract_address(),
             &amount,
         );
