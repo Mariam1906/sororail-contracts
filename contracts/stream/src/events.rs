@@ -55,6 +55,20 @@ pub struct ToppedUp {
     pub deposited: i128,
 }
 
+/// A third party funded the stream, extending `stop`. Attributed to the funder,
+/// but `sender` is still carried as data because it receives any refund on
+/// cancellation.
+#[contractevent(topics = ["stream", "topped_up_from"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ToppedUpFrom {
+    #[topic]
+    pub funder: Address,
+    pub sender: Address,
+    pub amount: i128,
+    pub new_stop: u64,
+    pub deposited: i128,
+}
+
 /// The sender extended `stop`, adding the funds the new span requires.
 #[contractevent(topics = ["stream", "extended"])]
 #[derive(Clone, Debug, Eq, PartialEq)]

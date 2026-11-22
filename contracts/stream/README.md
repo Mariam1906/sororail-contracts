@@ -24,8 +24,10 @@ withdrawn + refunded + remaining == deposited
 | `withdraw` | recipient | Pays out accrued, unwithdrawn funds (all of them if `amount` is `None`). |
 | `cancel` | sender | Ends a cancellable stream; returns unaccrued funds to the sender. |
 | `top_up` | sender | Adds funds to the deposit. The amount must keep the per-second rate exact. |
+| `top_up_from` | any funder | Adds funds on behalf of a third party, who authorizes the transfer. The same rate rule applies, and cancellation still refunds the sender. See the third-party top-ups section of [SECURITY.md](../../SECURITY.md). |
 | `extend` | sender | Moves `stop` later and pulls the extra funds the longer span needs. |
 | `balance_of`, `remaining` | anyone | Reads accrued-but-unwithdrawn or unstreamed balances. |
+| `has_ended` | anyone | Whether accrual has reached `stop` as of the ledger time. Ignores cancellation. |
 | `bump`, `get` | anyone | Extends TTL; reads the full stream record. |
 
 ## Example flow

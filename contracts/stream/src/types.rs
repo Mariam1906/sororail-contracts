@@ -78,7 +78,9 @@ impl Stream {
         if let Some(cancelled) = self.cancelled_at {
             effective = effective.min(cancelled);
         }
-        effective = effective.min(self.stop);
+        if self.has_ended(effective) {
+            effective = self.stop;
+        }
 
         if effective <= self.start {
             return Ok(0);
@@ -86,6 +88,15 @@ impl Stream {
         let elapsed = math::sub(i128::from(effective), i128::from(self.start))?;
         let accrued = math::mul(self.rate_per_second, elapsed)?;
         Ok(math::min(accrued, self.deposited))
+    }
+
+    /// Whether accrual has reached `stop` as of `at`, that is `at >= stop`.
+    ///
+    /// A pure clock predicate: it ignores cancellation. A cancelled stream
+    /// reports [`Stream::is_cancelled`] instead, and whether it had also
+    /// reached `stop` by the time it was cancelled is a separate question.
+    pub fn has_ended(&self, at: u64) -> bool {
+        at >= self.stop
     }
 
     /// Accrued but not yet withdrawn, as of `at`. What the recipient can take.
@@ -161,5 +172,128 @@ mod tests {
         // Even after full accrual, an over-withdrawn book still errors.
         s.withdrawn = s.deposited + 1;
         assert_eq!(s.available_at(s.stop), Err(Error::Underflow));
+    }
+
+    /// `has_ended` flips exactly at `stop`: one second before is still live,
+    /// `stop` itself has ended, and so does anything after it.
+    #[test]
+    fn has_ended_flips_exactly_at_stop() {
+        let env = Env::default();
+        let s = bare(&env);
+        assert!(!s.has_ended(s.stop - 1));
+        assert!(s.has_ended(s.stop));
+        assert!(s.has_ended(s.stop + 1));
+    }
+
+    /// `has_ended` ignores cancellation: the clock alone decides it.
+    #[test]
+    fn has_ended_ignores_cancellation() {
+        let env = Env::default();
+        let mut s = bare(&env);
+        s.cancelled_at = Some(s.start + 5);
+        assert!(s.is_cancelled());
+        assert!(!s.has_ended(s.stop - 1));
+        assert!(s.has_ended(s.stop));
+    }
+
+    /// Property tests over arbitrary stream records and timestamps.
+    ///
+    /// The generated `deposited` is drawn independently of `rate * duration`,
+    /// so some streams are underfunded for their span. A well-formed stream
+    /// never is, which makes the `min(.., deposited)` cap unreachable through
+    /// the contract. Here it stays observable, so the cap is genuinely tested
+    /// and not only implied by the funding invariant.
+    mod property {
+        #![allow(clippy::arithmetic_side_effects)]
+
+        use proptest::prelude::*;
+        use soroban_sdk::{testutils::Address as _, Address, Env};
+
+        use crate::types::Stream;
+
+        fn stream(
+            env: &Env,
+            rate: i128,
+            start: u64,
+            duration: u64,
+            deposited: i128,
+            cancelled_at: Option<u64>,
+        ) -> Stream {
+            Stream {
+                sender: Address::generate(env),
+                recipient: Address::generate(env),
+                token: Address::generate(env),
+                rate_per_second: rate,
+                start,
+                stop: start + duration,
+                cancellable: true,
+                deposited,
+                withdrawn: 0,
+                refunded: 0,
+                cancelled_at,
+            }
+        }
+
+        proptest! {
+            /// Accrual never decreases as time moves forward.
+            #[test]
+            fn accrued_is_monotonic_in_time(
+                rate in 1i128..=1_000_000,
+                start in 0u64..=1_000_000,
+                duration in 1u64..=1_000_000,
+                deposited in 0i128..=1_000_000_000_000,
+                cancelled_at in proptest::option::of(0u64..=3_000_000),
+                t0 in 0u64..=3_000_000,
+                dt in 0u64..=3_000_000,
+            ) {
+                let env = Env::default();
+                let s = stream(&env, rate, start, duration, deposited, cancelled_at);
+                let t1 = t0 + dt;
+
+                let a0 = s.accrued_at(t0).expect("accrued_at(t0) must not error");
+                let a1 = s.accrued_at(t1).expect("accrued_at(t1) must not error");
+                prop_assert!(
+                    a0 <= a1,
+                    "accrued fell from {a0} at t={t0} to {a1} at t={t1} ({s:?})"
+                );
+            }
+
+            /// Accrual is never negative and never exceeds `deposited`, at any
+            /// timestamp, whether or not the stream is cancelled.
+            #[test]
+            fn accrued_is_capped_by_deposited(
+                rate in 1i128..=1_000_000,
+                start in 0u64..=1_000_000,
+                duration in 1u64..=1_000_000,
+                deposited in 0i128..=1_000_000_000_000,
+                cancelled_at in proptest::option::of(0u64..=3_000_000),
+                at in 0u64..=3_000_000,
+            ) {
+                let env = Env::default();
+                let s = stream(&env, rate, start, duration, deposited, cancelled_at);
+
+                let accrued = s.accrued_at(at).expect("accrued_at must not error");
+                prop_assert!(accrued >= 0, "accrued is negative: {accrued} ({s:?})");
+                prop_assert!(
+                    accrued <= s.deposited,
+                    "accrued {accrued} exceeds deposited {} at t={at} ({s:?})",
+                    s.deposited
+                );
+            }
+
+            /// Nothing accrues at or before `start`, for any stream.
+            #[test]
+            fn nothing_accrues_at_start(
+                rate in 1i128..=1_000_000,
+                start in 0u64..=1_000_000,
+                duration in 1u64..=1_000_000,
+                deposited in 0i128..=1_000_000_000_000,
+                cancelled_at in proptest::option::of(0u64..=3_000_000),
+            ) {
+                let env = Env::default();
+                let s = stream(&env, rate, start, duration, deposited, cancelled_at);
+                prop_assert_eq!(s.accrued_at(start), Ok(0));
+            }
+        }
     }
 }

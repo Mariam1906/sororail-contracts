@@ -46,6 +46,7 @@ Every event emits topics in this order:
 | `stream` | `Withdrawn` | `withdrawn` | `recipient` | `amount`, `total_withdrawn` |
 | `stream` | `Cancelled` | `cancelled` | `sender` | `settled_to_recipient`, `refunded_to_sender`, `cancelled_at` |
 | `stream` | `ToppedUp` | `topped_up` | `sender` | `amount`, `new_stop`, `deposited` |
+| `stream` | `ToppedUpFrom` | `topped_up_from` | `funder` | `sender`, `amount`, `new_stop`, `deposited` |
 | `stream` | `Extended` | `extended` | `sender` | `added`, `old_stop`, `new_stop`, `deposited` |
 | `vesting` | `Created` | `created` | `grantor` | `beneficiary`, `token`, `total`, `start`, `cliff`, `duration`, `revocable` |
 | `vesting` | `Claimed` | `claimed` | `beneficiary` | `amount`, `total_claimed` |
@@ -55,7 +56,7 @@ Every event emits topics in this order:
 | `recurring` | `Cancelled` | `cancelled` | `cancelled_by` | `periods_charged`, `cancelled_at` |
 | `recurring` | `AmountUpdated` | `amount_updated` | - | `old_amount`, `new_amount`, `effective_from` |
 
-Every contract has at least one event; the five contracts account for 21
+Every contract has at least one event; the five contracts account for 22
 events in total.
 
 ## Notes for indexers
@@ -79,6 +80,11 @@ events in total.
   `#[topic]` address; it is attributed only by its two fixed topics. Its new
   amount becomes effective at `effective_from`, not at the block that emitted
   the event.
+- **Third-party stream top-ups.** `stream` `ToppedUpFrom` is attributed to the
+  `funder`, who may be neither party to the stream. `sender` is data, not a
+  topic, because the sender still receives any refund on cancellation. The
+  sender's `ToppedUp` event is unchanged, so filter on `topped_up_from` to
+  see third-party funding.
 - **One position per instance.** Stream and vesting events carry no position-id
   topic because each deployed instance holds exactly one position (see
   [architecture.md](architecture.md)).
