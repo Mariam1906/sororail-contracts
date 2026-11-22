@@ -27,9 +27,14 @@ fn conservation_holds_across_claim_then_revoke_then_claim() {
     let g = f.client.get();
     assert_eq!(f.held(), 0);
     assert_eq!(g.claimed + g.returned, g.total);
-    assert_eq!(
-        f.token.balance(&f.beneficiary) + f.token.balance(&f.grantor),
-        MINT
+    assert_conserved(
+        &f.token,
+        &[
+            f.grantor.clone(),
+            f.beneficiary.clone(),
+            f.client.address.clone(),
+        ],
+        MINT,
     );
 }
 

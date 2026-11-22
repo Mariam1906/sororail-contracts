@@ -19,7 +19,7 @@ pub mod types;
 
 pub use contract::{VestingContract, VestingContractClient};
 pub use errors::Error;
-pub use types::Grant;
+pub use types::{Grant, MAX_CHECKPOINTS};
 
 #[cfg(test)]
 mod test;

@@ -7,9 +7,7 @@
 //! settles when a hostile token is on the other side of `transfer`.
 
 use soroban_sdk::{testutils::Address as _, Address, Env};
-use sororail_common::testutils::{
-    deploy_fee_on_transfer_token, FeeOnTransferTokenClient,
-};
+use sororail_common::testutils::{deploy_fee_on_transfer_token, FeeOnTransferTokenClient};
 
 use crate::contract::{EscrowContract, EscrowContractClient};
 

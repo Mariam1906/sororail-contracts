@@ -62,7 +62,9 @@ impl BatchPayoutContract {
             client.transfer(&funder, &payment.to, &payment.amount);
         }
 
-        Ok(Self::publish_executed(&env, funder, token, count, total, memo))
+        Ok(Self::publish_executed(
+            &env, funder, token, count, total, memo,
+        ))
     }
 
     /// Pays every recipient the same amount, in one transaction.
@@ -109,7 +111,9 @@ impl BatchPayoutContract {
             client.transfer(&funder, &to, &amount_each);
         }
 
-        Ok(Self::publish_executed(&env, funder, token, count, total, memo))
+        Ok(Self::publish_executed(
+            &env, funder, token, count, total, memo,
+        ))
     }
 
     /// Splits `total` evenly across `recipients`, in one transaction.
@@ -219,9 +223,7 @@ impl BatchPayoutContract {
             if only_eoa && is_contract_addr(&env, &to) {
                 return Err(Error::BatchRecipientIsContract);
             }
-            bps_sum = bps_sum
-                .checked_add(bps)
-                .ok_or(Error::InvalidBasisPoints)?;
+            bps_sum = bps_sum.checked_add(bps).ok_or(Error::InvalidBasisPoints)?;
         }
         if bps_sum != math::MAX_BPS {
             return Err(Error::InvalidBasisPoints);
@@ -250,7 +252,9 @@ impl BatchPayoutContract {
             }
         }
 
-        Ok(Self::publish_executed(&env, funder, token, count, total, memo))
+        Ok(Self::publish_executed(
+            &env, funder, token, count, total, memo,
+        ))
     }
 
     /// Pays each recipient with its own token and amount, in one transaction.
@@ -294,8 +298,11 @@ impl BatchPayoutContract {
         funder.require_auth();
 
         for payment in payments.iter() {
-            token::TokenClient::new(&env, &payment.token)
-                .transfer(&funder, &payment.to, &payment.amount);
+            token::TokenClient::new(&env, &payment.token).transfer(
+                &funder,
+                &payment.to,
+                &payment.amount,
+            );
         }
 
         let receipt = Receipt {

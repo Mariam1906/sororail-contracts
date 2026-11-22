@@ -22,6 +22,10 @@
 //! Per-contract `Fixture` structs register their own contracts and drive the
 //! protocol — those stay in each test file because they are contract-specific.
 //! Only the plumbing that is literally identical across all of them lives here.
+//!
+//! [`assert_conserved`] is the workspace-wide token supply check: pass every
+//! address that may hold the token and the supply minted at the start, and it
+//! asserts no funds were created or destroyed.
 
 // Test fixtures do plain arithmetic on known-small constants; the checked-math
 // rule is for contract code.
@@ -126,6 +130,39 @@ impl Default for TestEnv {
     }
 }
 
+/// Asserts that the token balances of `participants` sum to `expected_total`.
+///
+/// This is the whole-supply conservation check: list every address that can
+/// hold the token — both parties, any fee sink, and the contract itself when it
+/// can retain funds — and pass the supply minted at the start of the test. A
+/// flow that creates or destroys tokens will make the sum drift away from
+/// `expected_total` and fail here.
+///
+/// Balances are summed with checked arithmetic, so an over-large fixture cannot
+/// wrap the check and hide a leak.
+///
+/// # Panics
+///
+/// Panics when the balances do not sum to `expected_total`, naming the
+/// participants so a failing test points at the address that holds the wrong
+/// amount.
+///
+/// ```rust,ignore
+/// let (token, funder) = te.make_token(MINT);
+/// // ... run the flow ...
+/// assert_conserved(&token, &[recipient, sender, contract], MINT);
+/// ```
+pub fn assert_conserved(token: &TokenClient<'_>, participants: &[Address], expected_total: i128) {
+    let actual = participants.iter().fold(0i128, |sum, who| {
+        sum.checked_add(token.balance(who))
+            .expect("conservation sum overflowed i128")
+    });
+    assert_eq!(
+        actual, expected_total,
+        "token balances for {participants:?} do not sum to {expected_total}"
+    );
+}
+
 // ─── Fee-on-transfer mock token (#438) ──────────────────────────────────────
 //
 // Several SoroRail tests need a token that does not conserve value on
@@ -144,7 +181,7 @@ impl Default for TestEnv {
 // never reach it because the whole module is gated by the `testutils`
 // feature.
 
-use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, IntoVal, String, Symbol};
+use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, String, Symbol};
 
 /// Storage keys used by {@link FeeOnTransferToken}. One instance per
 /// deployed contract address.
@@ -218,7 +255,11 @@ impl FeeOnTransferToken {
     pub fn mint_for_tests(env: Env, to: Address, amount: i128) {
         assert!(amount >= 0, "mint_for_tests cannot mint negative");
         let current = read_balance(&env, &to);
-        write_balance(&env, &to, current.checked_add(amount).expect("balance overflow"));
+        write_balance(
+            &env,
+            &to,
+            current.checked_add(amount).expect("balance overflow"),
+        );
     }
 
     // ── token::TokenInterface ─────────────────────────────────────────────
@@ -227,6 +268,7 @@ impl FeeOnTransferToken {
         read_balance(&env, &id)
     }
 
+    #[allow(deprecated)]
     pub fn transfer(env: Env, from: Address, to: Address, amount: i128) {
         from.require_auth();
         assert!(amount >= 0, "transfer amount must be non-negative");
@@ -238,17 +280,26 @@ impl FeeOnTransferToken {
         write_balance(&env, &from, from_balance - amount);
 
         let to_balance = read_balance(&env, &to);
-        write_balance(&env, &to, to_balance.checked_add(net).expect("balance overflow"));
+        write_balance(
+            &env,
+            &to,
+            to_balance.checked_add(net).expect("balance overflow"),
+        );
 
         if fee > 0 {
             let sink: Address = env.storage().instance().get(&FeeTokenKey::FeeSink).unwrap();
             let sink_balance = read_balance(&env, &sink);
-            write_balance(&env, &sink, sink_balance.checked_add(fee).expect("sink overflow"));
+            write_balance(
+                &env,
+                &sink,
+                sink_balance.checked_add(fee).expect("sink overflow"),
+            );
             env.events()
                 .publish((TOPIC_FEE_SKIMMED, from.clone(), to.clone()), (amount, fee));
         }
     }
 
+    #[allow(deprecated)]
     pub fn transfer_from(env: Env, spender: Address, from: Address, to: Address, amount: i128) {
         spender.require_auth();
         assert!(amount >= 0, "transfer amount must be non-negative");
@@ -262,12 +313,20 @@ impl FeeOnTransferToken {
         write_balance(&env, &from, from_balance - amount);
 
         let to_balance = read_balance(&env, &to);
-        write_balance(&env, &to, to_balance.checked_add(net).expect("balance overflow"));
+        write_balance(
+            &env,
+            &to,
+            to_balance.checked_add(net).expect("balance overflow"),
+        );
 
         if fee > 0 {
             let sink: Address = env.storage().instance().get(&FeeTokenKey::FeeSink).unwrap();
             let sink_balance = read_balance(&env, &sink);
-            write_balance(&env, &sink, sink_balance.checked_add(fee).expect("sink overflow"));
+            write_balance(
+                &env,
+                &sink,
+                sink_balance.checked_add(fee).expect("sink overflow"),
+            );
             env.events()
                 .publish((TOPIC_FEE_SKIMMED, from.clone(), to.clone()), (amount, fee));
         }
@@ -284,7 +343,10 @@ impl FeeOnTransferToken {
         assert!(amount >= 0, "allowance cannot be negative");
         env.storage().temporary().set(
             &FeeTokenKey::Allowance(from, spender),
-            &FeeTokenAllowance { amount, expiration_ledger },
+            &FeeTokenAllowance {
+                amount,
+                expiration_ledger,
+            },
         );
     }
 
@@ -293,15 +355,24 @@ impl FeeOnTransferToken {
     }
 
     pub fn decimals(env: Env) -> u32 {
-        env.storage().instance().get(&FeeTokenKey::Decimals).unwrap_or(7)
+        env.storage()
+            .instance()
+            .get(&FeeTokenKey::Decimals)
+            .unwrap_or(7)
     }
 
     pub fn name(env: Env) -> String {
-        env.storage().instance().get(&FeeTokenKey::Name).unwrap_or_else(|| String::from_str(&env, "FeeMock"))
+        env.storage()
+            .instance()
+            .get(&FeeTokenKey::Name)
+            .unwrap_or_else(|| String::from_str(&env, "FeeMock"))
     }
 
     pub fn symbol(env: Env) -> String {
-        env.storage().instance().get(&FeeTokenKey::Symbol).unwrap_or_else(|| String::from_str(&env, "FEE"))
+        env.storage()
+            .instance()
+            .get(&FeeTokenKey::Symbol)
+            .unwrap_or_else(|| String::from_str(&env, "FEE"))
     }
 
     pub fn burn(env: Env, from: Address, amount: i128) {
@@ -339,7 +410,10 @@ fn read_allowance(env: &Env, from: &Address, spender: &Address) -> FeeTokenAllow
     env.storage()
         .temporary()
         .get(&FeeTokenKey::Allowance(from.clone(), spender.clone()))
-        .unwrap_or(FeeTokenAllowance { amount: 0, expiration_ledger: 0 })
+        .unwrap_or(FeeTokenAllowance {
+            amount: 0,
+            expiration_ledger: 0,
+        })
 }
 
 fn spend_allowance(env: &Env, from: &Address, spender: &Address, amount: i128) {
@@ -387,7 +461,6 @@ pub fn deploy_fee_on_transfer_token(env: &Env, fee_bps: u32) -> (Address, Addres
 #[cfg(test)]
 mod fee_token_smoke {
     use super::*;
-    use soroban_sdk::testutils::Address as _;
 
     #[test]
     fn skims_the_configured_basis_points_on_transfer() {
@@ -444,14 +517,5 @@ mod fee_token_smoke {
         assert_eq!(client.balance(&dest), 995);
         assert_eq!(client.balance(&sink), 5);
         assert_eq!(client.allowance(&owner, &spender), 0);
-    }
-
-    // `IntoVal` import kept at module scope in case downstream test crates
-    // want to assert on emitted event topics; silence the unused-import
-    // warning when only the token methods above are exercised.
-    #[allow(dead_code)]
-    fn _assert_intoval_in_scope() {
-        let env = Env::default();
-        let _ = (TOPIC_FEE_SKIMMED).into_val(&env);
     }
 }

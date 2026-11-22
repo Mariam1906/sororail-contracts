@@ -214,7 +214,9 @@ impl RecurringContract {
         while charged < max_periods
             && now >= authorization.next_chargeable_at
             && !authorization.is_exhausted()
-            && authorization.valid_until.map_or(true, |until| authorization.next_chargeable_at < until)
+            && authorization
+                .valid_until
+                .map_or(true, |until| authorization.next_chargeable_at < until)
         {
             let amount = charge_one_period(&env, &mut authorization, now, false)?;
             total = math::add(total, amount)?;

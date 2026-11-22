@@ -231,8 +231,15 @@ fn authorize_rejects_multiple_invalid_args_in_order() {
     // The fixture is already initialized. AlreadyInitialized comes before
     // amount validation on a second call.
     assert_eq!(
-        f.client
-            .try_authorize(&f.payer, &f.payee, &f.token.address, &0, &PERIOD, &None, &None),
+        f.client.try_authorize(
+            &f.payer,
+            &f.payee,
+            &f.token.address,
+            &0,
+            &PERIOD,
+            &None,
+            &None
+        ),
         Err(Ok(Error::AlreadyInitialized))
     );
 }
@@ -453,10 +460,7 @@ fn charge_up_to_catches_up_only_elapsed_periods_with_a_per_call_limit() {
 #[test]
 fn charge_up_to_respects_the_initial_period_and_rejects_a_zero_limit() {
     let f = Fixture::new(None);
-    assert_eq!(
-        f.client.try_charge_up_to(&0),
-        Err(Ok(Error::InvalidAmount))
-    );
+    assert_eq!(f.client.try_charge_up_to(&0), Err(Ok(Error::InvalidAmount)));
     assert_eq!(
         f.client.try_charge_up_to(&1),
         Err(Ok(Error::RecurringPeriodNotElapsed))
@@ -496,10 +500,9 @@ fn charge_up_to_emits_each_period_index_and_remaining_cap() {
         .filter_by_contract(&f.client.address)
         .events();
     assert_eq!(events.len(), 4);
-    for (event_index, (period_index, remaining)) in
-        [(1u32, Some(3u32)), (2, Some(2)), (3, Some(1))]
-            .into_iter()
-            .enumerate()
+    for (event_index, (period_index, remaining)) in [(1u32, Some(3u32)), (2, Some(2)), (3, Some(1))]
+        .into_iter()
+        .enumerate()
     {
         let expected = Charged {
             payee: f.payee.clone(),

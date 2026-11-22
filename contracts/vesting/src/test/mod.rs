@@ -8,12 +8,16 @@ use soroban_sdk::{
     token::TokenClient,
     vec, Address, Env, Event, IntoVal, Symbol, Val,
 };
-use sororail_common::{storage::INSTANCE_BUMP, testutils::TestEnv, Error};
+use sororail_common::{
+    storage::INSTANCE_BUMP,
+    testutils::{assert_conserved, TestEnv},
+    Error,
+};
 
 use crate::{
     contract::{VestingContract, VestingContractClient},
     events::{Claimed, Revoked},
-    types::Grant,
+    types::{Grant, MAX_CHECKPOINTS},
 };
 
 mod bump;

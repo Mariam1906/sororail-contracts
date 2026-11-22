@@ -37,7 +37,10 @@ fn resolve_guards_against_a_missing_arbiter_even_if_disputed_is_reached() {
         crate::storage::save(&f.env, &escrow);
     });
 
-    assert_eq!(f.client.try_resolve(&5_000), Err(Ok(Error::EscrowNoArbiter)));
+    assert_eq!(
+        f.client.try_resolve(&5_000),
+        Err(Ok(Error::EscrowNoArbiter))
+    );
 }
 
 #[test]
@@ -504,9 +507,9 @@ mod golden_file {
     #[test]
     fn golden_bps_0_depositor_receives_all() {
         let (beneficiary, depositor_gain, escrow) = resolve_at(0);
-        assert_eq!(beneficiary, 0,         "bps=0: beneficiary gets nothing");
-        assert_eq!(depositor_gain, AMOUNT,  "bps=0: depositor gets full amount");
-        assert_eq!(escrow, 0,              "escrow drained");
+        assert_eq!(beneficiary, 0, "bps=0: beneficiary gets nothing");
+        assert_eq!(depositor_gain, AMOUNT, "bps=0: depositor gets full amount");
+        assert_eq!(escrow, 0, "escrow drained");
     }
 
     #[test]
@@ -542,8 +545,11 @@ mod golden_file {
     #[test]
     fn golden_bps_10000_beneficiary_receives_all() {
         let (beneficiary, depositor_gain, escrow) = resolve_at(10_000);
-        assert_eq!(beneficiary, AMOUNT,  "bps=10000: beneficiary gets full amount");
-        assert_eq!(depositor_gain, 0,    "bps=10000: depositor gets nothing");
+        assert_eq!(
+            beneficiary, AMOUNT,
+            "bps=10000: beneficiary gets full amount"
+        );
+        assert_eq!(depositor_gain, 0, "bps=10000: depositor gets nothing");
         assert_eq!(escrow, 0);
     }
 
@@ -551,7 +557,11 @@ mod golden_file {
     fn golden_no_dust_remains_in_escrow() {
         for bps in [0u32, 1, 100, 500, 1_000, 5_000, 9_000, 9_999, 10_000] {
             let (beneficiary, depositor_gain, escrow) = resolve_at(bps);
-            assert_eq!(beneficiary + depositor_gain, AMOUNT, "bps={bps}: split != AMOUNT");
+            assert_eq!(
+                beneficiary + depositor_gain,
+                AMOUNT,
+                "bps={bps}: split != AMOUNT"
+            );
             assert_eq!(escrow, 0, "bps={bps}: escrow not drained");
         }
     }

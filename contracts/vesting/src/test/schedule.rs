@@ -266,6 +266,34 @@ fn schedule_with_cliff_equal_to_duration_is_start_and_end() {
 }
 
 #[test]
+fn schedule_stops_at_the_checkpoint_cap() {
+    let f = Fixture::new(true);
+    assert_eq!(f.client.get().checkpoint_count(), MAX_CHECKPOINTS);
+    assert_eq!(f.client.schedule().len(), MAX_CHECKPOINTS);
+}
+
+#[test]
+fn checkpoint_capacity_rejects_one_past_the_cap() {
+    let env = Env::default();
+    let g = bare(&env, CLIFF, DURATION);
+    let mut points = soroban_sdk::Vec::new(&env);
+
+    // Fill the vector exactly to the cap; each push must succeed.
+    for n in 0..MAX_CHECKPOINTS {
+        g.try_push_checkpoint(&mut points, START + u64::from(n))
+            .expect("a checkpoint at the cap must be accepted");
+    }
+    assert_eq!(points.len(), MAX_CHECKPOINTS);
+
+    // Cap + 1 is rejected with the dedicated error and leaves the vector as is.
+    assert_eq!(
+        g.try_push_checkpoint(&mut points, START + DURATION),
+        Err(Error::VestingTooManyCheckpoints)
+    );
+    assert_eq!(points.len(), MAX_CHECKPOINTS);
+}
+
+#[test]
 fn schedule_matches_vested_amount_at_every_checkpoint() {
     let f = Fixture::new(true);
     for (at, vested) in checkpoints(&f) {
@@ -288,8 +316,6 @@ fn schedule_has_a_maximum_of_three_checkpoints() {
     // This generates at most 3 corner points: start, cliff (if cliff > 0),
     // and end. The checkpoint count never exceeds 3, so vested_amount
     // computation is O(1) with no unbounded loops.
-    let env = Env::default();
-
     // Case 1: cliff > 0 and cliff < duration → 3 checkpoints
     let f1 = Fixture::with_schedule(true, CLIFF, DURATION);
     assert_eq!(checkpoints(&f1).len(), 3);

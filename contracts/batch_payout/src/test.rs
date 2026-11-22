@@ -7,7 +7,10 @@ use soroban_sdk::{
     token::{StellarAssetClient, TokenClient},
     vec, Address, BytesN, Env, Event, IntoVal, Symbol, Vec,
 };
-use sororail_common::{testutils::TestEnv, Error};
+use sororail_common::{
+    testutils::{assert_conserved, TestEnv},
+    Error,
+};
 
 use crate::{
     contract::{BatchPayoutContract, BatchPayoutContractClient},
@@ -105,6 +108,17 @@ fn execute_pays_each_recipient_their_own_amount() {
     assert_eq!(f.token.balance(&f.funder), MINT - 357);
     // The contract is a conduit; it holds nothing.
     assert_eq!(f.token.balance(&f.client.address), 0);
+    assert_conserved(
+        &f.token,
+        &[
+            f.funder.clone(),
+            a.clone(),
+            b.clone(),
+            c.clone(),
+            f.client.address.clone(),
+        ],
+        MINT,
+    );
 
     // `execute` emits one token transfer per recipient before its own
     // `Executed`, so take the last event rather than assuming an index.
@@ -499,9 +513,14 @@ fn execute_rejects_multiple_invalid_args_in_order() {
 fn execute_equal_pays_everyone_the_same() {
     let f = Fixture::new();
     let recipients = f.addresses(5);
-    let receipt =
-        f.client
-            .execute_equal(&f.funder, &f.token.address, &recipients, &200, &false, &None);
+    let receipt = f.client.execute_equal(
+        &f.funder,
+        &f.token.address,
+        &recipients,
+        &200,
+        &false,
+        &None,
+    );
 
     assert_eq!(
         receipt,
@@ -545,8 +564,14 @@ fn execute_equal_rejects_a_non_positive_amount() {
     let recipients = f.addresses(3);
     for bad in [0i128, -1, i128::MIN] {
         assert_eq!(
-            f.client
-                .try_execute_equal(&f.funder, &f.token.address, &recipients, &bad, &false, &None),
+            f.client.try_execute_equal(
+                &f.funder,
+                &f.token.address,
+                &recipients,
+                &bad,
+                &false,
+                &None
+            ),
             Err(Ok(Error::InvalidAmount)),
             "amount {bad} was accepted"
         );
@@ -582,8 +607,14 @@ fn execute_equal_rejects_contract_address_in_recipients() {
     let mut recipients = f.addresses(2);
     recipients.push_back(contract);
     assert_eq!(
-        f.client
-            .try_execute_equal(&f.funder, &f.token.address, &recipients, &100, &false, &None),
+        f.client.try_execute_equal(
+            &f.funder,
+            &f.token.address,
+            &recipients,
+            &100,
+            &false,
+            &None
+        ),
         Err(Ok(Error::IdenticalParties))
     );
 }
@@ -594,8 +625,14 @@ fn execute_equal_rejects_multiple_invalid_args_in_order() {
     let contract = f.client.address.clone();
     // Non-positive amount comes before size check
     assert_eq!(
-        f.client
-            .try_execute_equal(&f.funder, &f.token.address, &f.addresses(0), &0, &false, &None),
+        f.client.try_execute_equal(
+            &f.funder,
+            &f.token.address,
+            &f.addresses(0),
+            &0,
+            &false,
+            &None
+        ),
         Err(Ok(Error::InvalidAmount))
     );
 
@@ -611,8 +648,14 @@ fn execute_equal_rejects_multiple_invalid_args_in_order() {
     // Self-payment check comes before total calculation
     let recipients = vec![&f.env, contract];
     assert_eq!(
-        f.client
-            .try_execute_equal(&f.funder, &f.token.address, &recipients, &i128::MAX, &false, &None),
+        f.client.try_execute_equal(
+            &f.funder,
+            &f.token.address,
+            &recipients,
+            &i128::MAX,
+            &false,
+            &None
+        ),
         Err(Ok(Error::IdenticalParties))
     );
 }
@@ -622,8 +665,14 @@ fn execute_equal_rejects_a_total_that_overflows() {
     let f = Fixture::new();
     let recipients = f.addresses(2);
     assert_eq!(
-        f.client
-            .try_execute_equal(&f.funder, &f.token.address, &recipients, &i128::MAX, &false, &None),
+        f.client.try_execute_equal(
+            &f.funder,
+            &f.token.address,
+            &recipients,
+            &i128::MAX,
+            &false,
+            &None
+        ),
         Err(Ok(Error::Overflow))
     );
 }
@@ -957,7 +1006,14 @@ fn execute_records_the_exact_authorised_invocation() {
                 function: AuthorizedFunction::Contract((
                     f.client.address.clone(),
                     soroban_sdk::symbol_short!("execute"),
-                    (&f.funder, &f.token.address, &batch, &false, &None::<BytesN<32>>).into_val(&f.env),
+                    (
+                        &f.funder,
+                        &f.token.address,
+                        &batch,
+                        &false,
+                        &None::<BytesN<32>>
+                    )
+                        .into_val(&f.env),
                 )),
                 sub_invocations: std::vec![AuthorizedInvocation {
                     function: AuthorizedFunction::Contract((
@@ -979,8 +1035,14 @@ fn execute_equal_records_the_exact_authorised_invocation() {
     let to = Address::generate(&f.env);
     let recipients = vec![&f.env, to.clone()];
 
-    f.client
-        .execute_equal(&f.funder, &f.token.address, &recipients, &200, &false, &None);
+    f.client.execute_equal(
+        &f.funder,
+        &f.token.address,
+        &recipients,
+        &200,
+        &false,
+        &None,
+    );
 
     assert_eq!(
         f.env.auths(),
@@ -990,7 +1052,14 @@ fn execute_equal_records_the_exact_authorised_invocation() {
                 function: AuthorizedFunction::Contract((
                     f.client.address.clone(),
                     soroban_sdk::symbol_short!("execute_equal"),
-                    (&f.funder, &f.token.address, &recipients, &200_i128, &false, &None::<BytesN<32>>)
+                    (
+                        &f.funder,
+                        &f.token.address,
+                        &recipients,
+                        &200_i128,
+                        &false,
+                        &None::<BytesN<32>>
+                    )
                         .into_val(&f.env),
                 )),
                 sub_invocations: std::vec![AuthorizedInvocation {
@@ -1108,9 +1177,9 @@ fn execute_equal_rejects_contract_recipient_when_only_eoa_is_set() {
 fn execute_equal_allows_account_recipients_when_only_eoa_is_set() {
     let f = Fixture::new();
     let recipients = f.addresses(3);
-    let receipt = f
-        .client
-        .execute_equal(&f.funder, &f.token.address, &recipients, &10, &true, &None);
+    let receipt =
+        f.client
+            .execute_equal(&f.funder, &f.token.address, &recipients, &10, &true, &None);
     assert_eq!(receipt.count, 3);
 }
 
@@ -1184,11 +1253,14 @@ fn execute_many_tokens_pays_each_recipient_from_their_own_token() {
 
     let receipt = client.execute_many_tokens(&funder, &payments, &false);
 
-    assert_eq!(receipt, Receipt {
+    assert_eq!(
+        receipt,
+        Receipt {
             count: 2,
             total: 800,
             memo: None,
-        });
+        }
+    );
     assert_eq!(token_a_client.balance(&a), 300);
     assert_eq!(token_b_client.balance(&b), 500);
     assert_eq!(token_a_client.balance(&funder), MINT - 300);
@@ -1401,14 +1473,9 @@ fn execute_weighted_pays_by_share_and_gives_dust_to_the_last_recipient() {
     let f = Fixture::new();
     let shares = shares_of(&f.env, &[3_333, 3_333, 3_334]);
 
-    let receipt = f.client.execute_weighted(
-        &f.funder,
-        &f.token.address,
-        &1_001,
-        &shares,
-        &false,
-        &None,
-    );
+    let receipt =
+        f.client
+            .execute_weighted(&f.funder, &f.token.address, &1_001, &shares, &false, &None);
     let all = f.env.events().all();
     let events = all.events();
 
@@ -1510,14 +1577,9 @@ fn execute_weighted_rejects_invalid_batches_before_moving_anything() {
 fn execute_weighted_zero_share_pays_nothing_but_counts() {
     let f = Fixture::new();
     let shares = shares_of(&f.env, &[0, 10_000]);
-    let receipt = f.client.execute_weighted(
-        &f.funder,
-        &f.token.address,
-        &500,
-        &shares,
-        &false,
-        &None,
-    );
+    let receipt =
+        f.client
+            .execute_weighted(&f.funder, &f.token.address, &500, &shares, &false, &None);
     assert_eq!(receipt.count, 2);
     assert_eq!(f.token.balance(&shares.get(0).unwrap().0), 0);
     assert_eq!(f.token.balance(&shares.get(1).unwrap().0), 500);
@@ -1535,9 +1597,8 @@ fn execute_weighted_payouts_always_sum_to_total() {
         let total = rng.next_in(1, MINT as u64) as i128;
 
         // n - 1 random cut points in [0, 10_000] give n shares summing to 10_000.
-        let mut cuts: std::vec::Vec<u32> = (0..n - 1)
-            .map(|_| rng.next_in(0, 10_000) as u32)
-            .collect();
+        let mut cuts: std::vec::Vec<u32> =
+            (0..n - 1).map(|_| rng.next_in(0, 10_000) as u32).collect();
         cuts.sort_unstable();
         let mut bps = std::vec::Vec::with_capacity(n);
         let mut prev = 0u32;
@@ -1548,14 +1609,9 @@ fn execute_weighted_payouts_always_sum_to_total() {
         bps.push(10_000 - prev);
 
         let shares = shares_of(&f.env, &bps);
-        let receipt = f.client.execute_weighted(
-            &f.funder,
-            &f.token.address,
-            &total,
-            &shares,
-            &false,
-            &None,
-        );
+        let receipt =
+            f.client
+                .execute_weighted(&f.funder, &f.token.address, &total, &shares, &false, &None);
         assert_eq!(receipt.total, total);
         assert_eq!(receipt.count, n as u32);
 
@@ -1671,7 +1727,11 @@ fn assert_equal_split_by_balances(n: u32, total: i128) -> EqualSplitReceipt {
     let mut sum: i128 = 0;
     for (i, to) in recipients.iter().enumerate() {
         let got = f.token.balance(&to);
-        let want = if i + 1 == n as usize { each + dust } else { each };
+        let want = if i + 1 == n as usize {
+            each + dust
+        } else {
+            each
+        };
         assert_eq!(got, want, "recipient {i} of {n}, total {total}");
         sum += got;
     }
