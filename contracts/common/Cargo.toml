@@ -16,13 +16,15 @@ doctest = true
 # (token minting, address generation, ledger time control). Depend on this
 # feature in the `[dev-dependencies]` section of every contract that uses it.
 # Never enabled in production builds.
-testutils = ["soroban-sdk/testutils"]
+testutils = ["soroban-sdk/testutils", "dep:proptest"]
 
 [dependencies]
 soroban-sdk = { workspace = true }
+proptest = { workspace = true, optional = true }
 
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }
+proptest = { workspace = true }
 
 [lints]
 workspace = true

@@ -74,6 +74,83 @@ fn withdraw_rejects_more_than_has_accrued() {
     f.assert_conserved();
 }
 
+/// Issue #439: a SAC with clawback and authorization flags enabled can revoke
+/// the recipient mid-stream. The failed token transfer must not corrupt the
+/// stream: balances and accounting are unchanged and the accrued amount stays
+/// withdrawable.
+///
+/// Recovery: the token admin calls `set_authorized` with `true` again, after
+/// which `withdraw` succeeds. If authorization cannot be restored, the sender's
+/// `cancel` settles the accrued amount to the recipient and refunds the rest.
+#[test]
+fn withdraw_fails_without_state_change_when_recipient_is_deauthorized() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().with_mut(|l| l.timestamp = START);
+
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let sac = env.register_stellar_asset_contract_v2(Address::generate(&env));
+    let token = sac.address();
+    let sac_client = StellarAssetClient::new(&env, &token);
+    sac.issuer().set_flag(IssuerFlags::RequiredFlag);
+    sac.issuer().set_flag(IssuerFlags::RevocableFlag);
+    sac.issuer().set_flag(IssuerFlags::ClawbackEnabledFlag);
+
+    let contract_id = env.register(StreamContract, ());
+    let client = StreamContractClient::new(&env, &contract_id);
+
+    // AUTH_REQUIRED makes every contract address unauthorized by default, so
+    // the sender, the stream contract and the recipient must all be authorized
+    // before any balance can be received or spent.
+    sac_client.set_authorized(&sender, &true);
+    sac_client.set_authorized(&contract_id, &true);
+    sac_client.set_authorized(&recipient, &true);
+    sac_client.mint(&sender, &MINT);
+
+    client.create(&sender, &recipient, &token, &RATE, &START, &STOP, &true);
+    let token_client = TokenClient::new(&env, &token);
+    assert_eq!(token_client.balance(&contract_id), DEPOSITED);
+
+    env.ledger().with_mut(|l| l.timestamp = START + 300);
+    let available_before = client.balance_of(&recipient);
+    assert_eq!(available_before, RATE * 300);
+    let stream_before = client.get();
+    let held_before = token_client.balance(&contract_id);
+    let recipient_before = token_client.balance(&recipient);
+    let sender_before = token_client.balance(&sender);
+
+    // Revoke the recipient mid-stream; AUTH_REVOCABLE makes this legal.
+    sac_client.set_authorized(&recipient, &false);
+    assert!(!sac_client.authorized(&recipient));
+
+    // The token rejects the incoming transfer, so withdraw fails as a host
+    // error (not a typed contract error) and the host rolls back every write.
+    assert!(matches!(client.try_withdraw(&None), Err(Err(_))));
+    assert_eq!(client.get(), stream_before);
+    assert_eq!(client.balance_of(&recipient), available_before);
+    assert_eq!(client.remaining(), held_before);
+    assert_eq!(token_client.balance(&contract_id), held_before);
+    assert_eq!(token_client.balance(&recipient), recipient_before);
+    assert_eq!(token_client.balance(&sender), sender_before);
+
+    // Recovery: re-authorizing the recipient restores the same withdrawable
+    // amount; nothing was lost while the balance was frozen.
+    sac_client.set_authorized(&recipient, &true);
+    assert!(sac_client.authorized(&recipient));
+    assert_eq!(client.withdraw(&None), available_before);
+    assert_eq!(
+        token_client.balance(&recipient),
+        recipient_before + available_before
+    );
+    assert_eq!(
+        token_client.balance(&contract_id),
+        held_before - available_before
+    );
+    assert_eq!(client.remaining(), held_before - available_before);
+    assert_eq!(client.get().withdrawn, available_before);
+}
+
 #[test]
 fn withdraw_rejects_when_nothing_has_accrued() {
     let f = Fixture::new(true);

@@ -16,6 +16,17 @@ updates:
     commit-message:
       prefix: chore
       include: scope
+    # Group all soroban-* crate bumps into a single PR (issue #454).
+    #
+    # Why: soroban-sdk, soroban-env-host, and other soroban-* crates are
+    # released together and must be updated atomically. Individual per-crate
+    # PRs fail CI until every crate in the set is on the same version because
+    # the workspace Cargo.lock records a single resolved version for each.
+    # Grouping them ensures the dependency set moves as a unit.
+    groups:
+      soroban:
+        patterns:
+          - "soroban-*"
     # Ignore every pre-release of soroban-sdk for the next major lines so a
     # floating *-rc* on crates.io cannot open a PR. Stable 28.0.0 / 29.0.0
     # still open normally once they exist without a pre-release identifier.

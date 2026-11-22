@@ -1,0 +1,33 @@
+{
+  "name": "SoroRail Contracts",
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
+  "features": {
+    "ghcr.io/devcontainers/features/git:1": {}
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "rust-lang.rust-analyzer",
+        "tamasfe.even-better-toml",
+        "serayuzgur.crates",
+        "vadimcn.vscode-lldb"
+      ],
+      "settings": {
+        "editor.formatOnSave": true,
+        "rust-analyzer.check.command": "clippy",
+        "rust-analyzer.cargo.allTargets": true,
+        "[rust]": {
+          "editor.defaultFormatter": "rust-lang.rust-analyzer"
+        }
+      }
+    }
+  },
+  "remoteUser": "vscode",
+  "mounts": [
+    "source=sororail-cargo-cache,target=/home/vscode/.cargo,type=volume",
+    "source=sororail-target-cache,target=${containerWorkspaceFolder}/target,type=volume"
+  ],
+  "postCreateCommand": "./.devcontainer/post-create.sh"
+}

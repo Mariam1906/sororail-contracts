@@ -33,6 +33,16 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  changelog:
+    name: contract changelog
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - run: bash scripts/check_changelog_contracts.sh "${{ github.event.pull_request.base.sha }}"
+
   check:
     name: fmt / clippy / test
     runs-on: ubuntu-latest
@@ -54,14 +64,22 @@ jobs:
           echo "rustc --version patch=${actual}"
           test "${actual}" = "${expected}"
       - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
+      - name: cache cargo bin tools
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4
+        with:
+          path: ~/.cargo/bin
+          key: ${{ runner.os }}-cargo-bin-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-bin-
       - uses: taiki-e/install-action@4765db214858792ed289a2b5e543daf93d682a48 # nextest
-
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo nextest run --workspace
       - run: make verify-deployments
       - run: ./scripts/check_error_docs.sh
+      - run: ./scripts/check_event_docs.sh
       - run: ./scripts/check_deployments.sh
+      - run: ./scripts/check_storage_footprint.sh
 
   test-contracts:
     name: test (${{ matrix.package }})
@@ -88,6 +106,13 @@ jobs:
       - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
         with:
           key: ${{ matrix.package }}
+      - name: cache cargo bin tools
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4
+        with:
+          path: ~/.cargo/bin
+          key: ${{ runner.os }}-cargo-bin-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-bin-
       - uses: taiki-e/install-action@4765db214858792ed289a2b5e543daf93d682a48 # nextest
       - run: cargo nextest run -p ${{ matrix.package }}
 
@@ -103,6 +128,16 @@ jobs:
       - run: cargo doc --no-deps --workspace
         env:
           RUSTDOCFLAGS: "-D warnings"
+
+  link-check:
+    name: markdown link check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: install lychee
+        run: cargo install lychee
+      - name: check markdown links
+        run: lychee --offline --no-progress '**/*.md'
 
   build:
     name: wasm build
@@ -179,6 +214,37 @@ jobs:
           done
           exit "$fail"
 
+  reproducible:
+    name: reproducible build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      # Two fresh containers, each with its own empty target dir and the same
+      # pinned toolchain/lockfile. If any build input is host-dependent, the
+      # hash lists differ and this job fails.
+      - name: build twice and compare wasm hashes
+        run: |
+          set -euo pipefail
+          IMAGE=rust:1.97.1-bookworm
+          docker pull "$IMAGE"
+          for run in first second; do
+            docker run --rm \
+              -v "$PWD:/src:ro" -w /src \
+              -e CARGO_TARGET_DIR=/tmp/repro-target \
+              "$IMAGE" bash -c '
+                set -euo pipefail
+                rustup target add wasm32v1-none
+                cargo build --locked --workspace \
+                  --exclude sororail-integration-tests \
+                  --target wasm32v1-none --release
+                cd "$CARGO_TARGET_DIR/wasm32v1-none/release"
+                sha256sum sororail_*.wasm
+              ' > "hashes-$run.txt"
+          done
+          diff -u hashes-first.txt hashes-second.txt
+          echo "WASM hashes match across both clean builds"
+          cat hashes-first.txt
+
   msrv:
     name: msrv (1.91)
     runs-on: ubuntu-latest
@@ -208,6 +274,13 @@ jobs:
           actual="$(rustc -V | awk '{print $2}')"
           test "${actual}" = "${expected}"
       - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
+      - name: cache cargo bin tools
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4
+        with:
+          path: ~/.cargo/bin
+          key: ${{ runner.os }}-cargo-bin-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-bin-
       - uses: taiki-e/install-action@ab4220e067fa624f7930084426dbfb7440a52829 # cargo-llvm-cov
       - uses: taiki-e/install-action@4765db214858792ed289a2b5e543daf93d682a48 # nextest
       # Line coverage alone can miss error-path branches (issue #52). Gate
@@ -217,6 +290,34 @@ jobs:
           --fail-under-lines 90
           --fail-under-regions 75
           --fail-under-functions 80
+          --lcov --output-path lcov.info
+      - name: upload coverage report
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: coverage-report
+          path: lcov.info
+      - name: generate coverage summary
+        id: coverage
+        run: |
+          # Parse coverage percentages from lcov.info
+          lines_found=$(grep -o "LF:[0-9]*" lcov.info | awk -F: '{sum+=$2} END {print sum}')
+          lines_hit=$(grep -o "LH:[0-9]*" lcov.info | awk -F: '{sum+=$2} END {print sum}')
+          funcs_found=$(grep -o "FNF:[0-9]*" lcov.info | awk -F: '{sum+=$2} END {print sum}')
+          funcs_hit=$(grep -o "FNH:[0-9]*" lcov.info | awk -F: '{sum+=$2} END {print sum}')
+
+          lines_pct=$(awk "BEGIN {printf \"%.2f\", ($lines_hit / $lines_found) * 100}")
+          funcs_pct=$(awk "BEGIN {printf \"%.2f\", ($funcs_hit / $funcs_found) * 100}")
+
+          cat >> $GITHUB_STEP_SUMMARY <<EOF
+          ## Coverage Report
+
+          | Metric | Coverage |
+          |--------|----------|
+          | Lines | ${lines_pct}% (${lines_hit}/${lines_found}) |
+          | Functions | ${funcs_pct}% (${funcs_hit}/${funcs_found}) |
+
+          Thresholds: Lines ≥90%, Regions ≥75%, Functions ≥80%
+          EOF
       - name: audit Error::* variants are referenced in tests
         run: bash scripts/audit-error-variant-coverage.sh
 
@@ -237,3 +338,141 @@ jobs:
       - uses: rustsec/audit-check@69366f33c96575abad1ee0dba8212993eecbe998 # v2.0.0
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+
+  # Issue #455: verify that every workflow step that installs Rust uses the
+  # channel declared in rust-toolchain.toml. This job reads the file and
+  # compares it against the installed rustc, so bumping only rust-toolchain.toml
+  # is enough to move CI — no workflow edits required. Any drift between the
+  # file and the installed toolchain fails this job before tests run.
+  toolchain-check:
+    name: toolchain file matches CI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      # Read the channel from rust-toolchain.toml and pass it to the installer.
+      # This is the single source of truth; the hard-coded version string in
+      # other jobs must equal what this file declares.
+      - name: read toolchain channel
+        id: toolchain
+        run: |
+          channel="$(sed -n 's/^channel *= *"\(.*\)".*/\1/p' rust-toolchain.toml)"
+          echo "channel=${channel}" >> "$GITHUB_OUTPUT"
+          echo "Toolchain channel from rust-toolchain.toml: ${channel}"
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de
+        with:
+          toolchain: ${{ steps.toolchain.outputs.channel }}
+      - name: verify installed rustc matches rust-toolchain.toml
+        run: |
+          expected="${{ steps.toolchain.outputs.channel }}"
+          actual="$(rustc -V | awk '{print $2}')"
+          echo "rust-toolchain.toml channel : ${expected}"
+          echo "rustc --version patch       : ${actual}"
+          if [ "${actual}" != "${expected}" ]; then
+            echo "::error::Toolchain mismatch: rust-toolchain.toml declares '${expected}' but rustc reports '${actual}'. Update rust-toolchain.toml to bump the toolchain — do not edit workflow files directly."
+            exit 1
+          fi
+          echo "✅ Toolchain matches: ${actual}"
+
+  # Issue #441: catch unused dependencies before they reach the wasm size
+  # budget and the audit surface. cargo-machete is a fast textual scan, so a
+  # dependency used only through a generated macro or a build script can be a
+  # false positive; those go in [workspace.metadata.cargo-machete] in
+  # Cargo.toml (documented in CONTRIBUTING.md), not in an ignored job.
+  unused-deps:
+    name: cargo machete
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de
+        with:
+          toolchain: "1.97.1"
+      - uses: taiki-e/install-action@75a7c0f87bd666af3cdb75c5b9e9d03ab6044e6f # v2
+        with:
+          tool: cargo-machete
+      - run: cargo machete
+
+  # Issue #440: licence and dependency-policy gate. The `audit` job above owns
+  # vulnerability advisories; this job covers the gaps it does not check —
+  # the SPDX allow-list, duplicate versions, and unexpected sources. deny.toml
+  # also sets `yanked = "deny"` for full `cargo deny check` runs.
+  cargo-deny:
+    name: cargo deny
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de
+        with:
+          toolchain: "1.97.1"
+      - uses: taiki-e/install-action@75a7c0f87bd666af3cdb75c5b9e9d03ab6044e6f # v2
+        with:
+          tool: cargo-deny
+      - run: cargo deny check licenses bans
+
+  all-checks:
+    name: all checks
+    runs-on: ubuntu-latest
+    if: always()
+    needs:
+      - conventional-commits
+      - check
+      - test-contracts
+      - doc
+      - link-check
+      - build
+      - reproducible
+      - msrv
+      - coverage
+      - audit
+      - toolchain-check
+      - unused-deps
+      - cargo-deny
+    steps:
+      - name: decide whether all required jobs succeeded
+        run: |
+          # Fail if any dependency job failed or was cancelled.
+          # Skipped jobs (e.g., conventional-commits on push) are ignored.
+          echo "Job results:"
+          echo "conventional-commits: ${{ needs.conventional-commits.result }}"
+          echo "check: ${{ needs.check.result }}"
+          echo "test-contracts: ${{ needs.test-contracts.result }}"
+          echo "doc: ${{ needs.doc.result }}"
+          echo "link-check: ${{ needs.link-check.result }}"
+          echo "build: ${{ needs.build.result }}"
+          echo "reproducible: ${{ needs.reproducible.result }}"
+          echo "msrv: ${{ needs.msrv.result }}"
+          echo "coverage: ${{ needs.coverage.result }}"
+          echo "audit: ${{ needs.audit.result }}"
+          echo "toolchain-check: ${{ needs.toolchain-check.result }}"
+          echo "unused-deps: ${{ needs.unused-deps.result }}"
+          echo "cargo-deny: ${{ needs.cargo-deny.result }}"
+
+          if [[ "${{ needs.conventional-commits.result }}" == "failure" ]] || \
+             [[ "${{ needs.check.result }}" == "failure" ]] || \
+             [[ "${{ needs.test-contracts.result }}" == "failure" ]] || \
+             [[ "${{ needs.doc.result }}" == "failure" ]] || \
+             [[ "${{ needs.link-check.result }}" == "failure" ]] || \
+             [[ "${{ needs.build.result }}" == "failure" ]] || \
+             [[ "${{ needs.reproducible.result }}" == "failure" ]] || \
+             [[ "${{ needs.msrv.result }}" == "failure" ]] || \
+             [[ "${{ needs.coverage.result }}" == "failure" ]] || \
+             [[ "${{ needs.audit.result }}" == "failure" ]] || \
+             [[ "${{ needs.toolchain-check.result }}" == "failure" ]] || \
+             [[ "${{ needs.unused-deps.result }}" == "failure" ]] || \
+             [[ "${{ needs.cargo-deny.result }}" == "failure" ]] || \
+             [[ "${{ needs.conventional-commits.result }}" == "cancelled" ]] || \
+             [[ "${{ needs.check.result }}" == "cancelled" ]] || \
+             [[ "${{ needs.test-contracts.result }}" == "cancelled" ]] || \
+             [[ "${{ needs.doc.result }}" == "cancelled" ]] || \
+             [[ "${{ needs.link-check.result }}" == "cancelled" ]] || \
+             [[ "${{ needs.build.result }}" == "cancelled" ]] || \
+             [[ "${{ needs.reproducible.result }}" == "cancelled" ]] || \
+             [[ "${{ needs.msrv.result }}" == "cancelled" ]] || \
+             [[ "${{ needs.coverage.result }}" == "cancelled" ]] || \
+             [[ "${{ needs.audit.result }}" == "cancelled" ]] || \
+             [[ "${{ needs.toolchain-check.result }}" == "cancelled" ]] || \
+             [[ "${{ needs.unused-deps.result }}" == "cancelled" ]] || \
+             [[ "${{ needs.cargo-deny.result }}" == "cancelled" ]]; then
+            echo "❌ One or more required jobs failed or were cancelled"
+            exit 1
+          fi
+          echo "✅ All required jobs passed"

@@ -1,0 +1,68 @@
+# sororail-stream
+
+## Purpose
+
+Stream is a continuous per-second transfer from sender to recipient. One stream
+is stored per deployed instance and is fully funded up front for its whole
+declared span. The recipient withdraws what has accrued; the sender may cancel,
+if the stream was created cancellable, taking back only what has not yet
+accrued.
+
+There is no per-second state: accrual is a pure function of the stream record
+and a ledger timestamp, evaluated at read time. The invariant is exact at every
+point in the lifecycle, with no rounding leakage:
+
+```text
+withdrawn + refunded + remaining == deposited
+```
+
+## Entry points
+
+| Entry point | Caller | Effect |
+| --- | --- | --- |
+| `create` | sender | Records the stream and pulls the full `deposited` amount in. |
+| `withdraw` | recipient | Pays out accrued, unwithdrawn funds (all of them if `amount` is `None`). |
+| `cancel` | sender | Ends a cancellable stream; returns unaccrued funds to the sender. |
+| `top_up` | sender | Adds funds to the deposit. The amount must keep the per-second rate exact. |
+| `extend` | sender | Moves `stop` later and pulls the extra funds the longer span needs. |
+| `balance_of`, `remaining` | anyone | Reads accrued-but-unwithdrawn or unstreamed balances. |
+| `bump`, `get` | anyone | Extends TTL; reads the full stream record. |
+
+## Example flow
+
+```text
+1. client.create(&sender, &recipient, &token, &rate, &start, &stop, &true)
+   -> the contract pulls rate * (stop - start) from the sender.
+2. Time passes. client.balance_of(&recipient) accrues with the ledger timestamp.
+3. client.withdraw(&None) pays the recipient everything accrued so far.
+4. The sender may call client.top_up(&amount) or client.extend(&new_stop) to
+   keep the stream going, or client.cancel() to settle and refund the rest.
+```
+
+Copy-pasteable `stellar contract invoke` commands are in
+[docs/CONTRACT_INVOKE.md](../../docs/CONTRACT_INVOKE.md), and the token movement
+diagram is in [docs/fund-flows.md](../../docs/fund-flows.md).
+
+## Errors
+
+Failures use the shared `Error` enum in
+[contracts/common/src/errors.rs](../common/src/errors.rs), re-exported as
+`sororail_stream::Error`. Stream owns codes 40–59; the canonical table is
+[docs/ERRORS.md](../../docs/ERRORS.md).
+
+| Variant | Raised by |
+| --- | --- |
+| `AlreadyInitialized` | `create` on an initialized instance |
+| `NotInitialized` | any entry point before `create` |
+| `IdenticalParties` | `create` with `sender == recipient` |
+| `InvalidAmount` | non-positive rate or withdrawal; `top_up` not a multiple of the rate |
+| `InvalidTimeRange` | `create` with `stop <= start`; `top_up` overflowing `stop` |
+| `Overflow` | funding or accrual exceeding `i128` |
+| `StreamCancelled` | any mutation after cancellation |
+| `StreamNotCancellable` | `cancel` on a stream created with `cancellable = false` |
+| `StreamInsufficientAccrued` | `withdraw` for more than has accrued |
+| `StreamNotExtendable` | `extend` with `new_stop` not after the current stop |
+
+Authorization failures are host errors, not typed variants: the privileged
+entry points call `require_auth` directly on the one party allowed to invoke
+them.

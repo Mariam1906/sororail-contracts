@@ -2,7 +2,7 @@ WASM_TARGET := wasm32v1-none
 WASM_DIR    := target/$(WASM_TARGET)/release
 CONTRACTS   := escrow stream vesting recurring batch_payout
 
-.PHONY: all build test test-all test-contracts fmt fmt-check lint audit optimize wasm-size specs clean ci coverage check-error-docs verify-deployments check-deployments check-wasm-sizes
+.PHONY: all build test test-all test-contracts fmt fmt-check lint audit optimize wasm-size specs clean ci coverage check-error-docs check-event-docs verify-deployments check-deployments check-wasm-sizes check-storage-footprint changelog check-changelog update-spec-snapshots check-spec-snapshots
 
 all: build test
 
@@ -74,13 +74,19 @@ specs: build
 check-error-docs:
 	./scripts/check_error_docs.sh
 
-ci: fmt-check lint test build check-error-docs check-deployments check-wasm-sizes
+check-event-docs:
+	./scripts/check_event_docs.sh
+
+ci: fmt-check lint test build check-error-docs check-event-docs check-deployments check-wasm-sizes check-storage-footprint
 
 check-deployments:
 	./scripts/check_deployments.sh
 
 check-wasm-sizes:
 	./scripts/check_wasm_sizes.sh $(WASM_DIR)
+
+check-storage-footprint:
+	./scripts/check_storage_footprint.sh
 
 # Matches .github/workflows/ci.yml coverage job (lines / regions / functions).
 coverage:
@@ -89,6 +95,56 @@ coverage:
 		--fail-under-regions 75 \
 		--fail-under-functions 80
 	bash scripts/audit-error-variant-coverage.sh
+
+# Regenerate CHANGELOG.md from the git log via git-cliff (#444). Commits
+# already follow Conventional Commits; the mapping to Keep-a-Changelog
+# sections lives in cliff.toml. `check-changelog` is the read-only form
+# used in CI: it prints the generated file to stdout and fails if the
+# committed file is stale.
+changelog:
+	@command -v git-cliff >/dev/null || { \
+		echo "git-cliff is required. Install with 'cargo install git-cliff --locked' or 'brew install git-cliff'." >&2; \
+		exit 1; \
+	}
+	git-cliff --config cliff.toml --output CHANGELOG.md
+	@echo "CHANGELOG.md regenerated."
+
+check-changelog:
+	@command -v git-cliff >/dev/null || { \
+		echo "git-cliff is required. Install with 'cargo install git-cliff --locked' or 'brew install git-cliff'." >&2; \
+		exit 1; \
+	}
+	@tmp="$$(mktemp)"; \
+	git-cliff --config cliff.toml --output "$$tmp" >/dev/null; \
+	if ! diff -u CHANGELOG.md "$$tmp"; then \
+		echo "CHANGELOG.md is out of date — run 'make changelog' and commit the result." >&2; \
+		rm -f "$$tmp"; \
+		exit 1; \
+	fi; \
+	rm -f "$$tmp"; \
+	echo "CHANGELOG.md is up to date."
+
+# Generate spec snapshot JSON files for every contract and commit the results.
+# Requires: stellar CLI  (cargo install --locked stellar-cli --features opt)
+# Run this whenever the ABI of any contract changes, then commit the updated
+# spec_snapshot.json files in contracts/<name>/.
+update-spec-snapshots: build
+	@command -v stellar >/dev/null || { \
+		echo "stellar CLI required: cargo install --locked stellar-cli --features opt" >&2; \
+		exit 1; \
+	}
+	@for c in $(CONTRACTS); do \
+		echo "updating spec snapshot for $$c"; \
+		stellar contract info interface --output json \
+			--wasm $(WASM_DIR)/sororail_$$c.wasm \
+			> contracts/$$c/spec_snapshot.json || exit 1; \
+	done
+	@echo "snapshots updated — commit the spec_snapshot.json files in contracts/"
+
+# Diff each contract's current spec against its committed snapshot and fail on
+# any drift. Silently skips if stellar CLI is not installed.
+check-spec-snapshots:
+	@bash scripts/check_spec_snapshots.sh
 
 clean:
 	cargo clean

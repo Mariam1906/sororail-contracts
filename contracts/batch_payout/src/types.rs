@@ -40,6 +40,22 @@ pub struct Payment {
     pub amount: i128,
 }
 
+/// One line of a multi-token batch: which token to use, who is paid, and how
+/// much.
+///
+/// Used by `execute_many_tokens` to describe a payment in a batch that may
+/// draw from more than one token at once.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MultiTokenPayment {
+    /// The token contract to draw the payment from.
+    pub token: Address,
+    /// The recipient's address.
+    pub to: Address,
+    /// The amount to transfer, in the token's smallest unit. Must be positive.
+    pub amount: i128,
+}
+
 /// The outcome of a batch, returned to the caller and emitted as an event.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -47,6 +63,11 @@ pub struct Receipt {
     /// How many recipients were paid.
     pub count: u32,
     /// The sum actually moved.
+    ///
+    /// For `execute_many_tokens` this is the sum of raw amounts across all
+    /// tokens; the values are incommensurable when tokens have different
+    /// denominators, so treat this field as informational rather than
+    /// financially significant.
     pub total: i128,
 }
 

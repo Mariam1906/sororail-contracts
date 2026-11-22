@@ -253,9 +253,11 @@ impl EscrowContract {
     pub fn resolve(env: Env, split_bps: u32) -> Result<(), Error> {
         let mut escrow = storage::load(&env)?;
         auth::require(escrow.state == State::Disputed, Error::EscrowNotDisputed)?;
-        // SAFETY: `dispute` requires `arbiter.is_some()`, so reaching
-        // `State::Disputed` guarantees an arbiter exists (#105).
-        let arbiter = escrow.arbiter.clone().expect("dispute requires an arbiter");
+        // `dispute` requires `arbiter.is_some()` (#105), so this arm is
+        // unreachable through the public API. The explicit check is defense-in-depth:
+        // if the invariant is ever violated by a storage migration or test bypass,
+        // the contract returns a typed error rather than aborting with a panic.
+        let arbiter = escrow.arbiter.clone().ok_or(Error::EscrowNoArbiter)?;
         arbiter.require_auth();
 
         let (to_beneficiary, to_depositor) = math::split_bps(escrow.amount, split_bps)?;

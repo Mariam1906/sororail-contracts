@@ -26,13 +26,77 @@ jobs:
       - name: Build WASM contracts
         run: cargo build --workspace --exclude sororail-integration-tests --target wasm32v1-none --release
 
+      - name: Optimize WASM contracts
+        run: make optimize
+
       - name: Generate contract specs
         run: make specs
 
-      - name: Create Release with Specs
+      # Publish sha256 checksums for each optimized wasm (#443). Users can
+      # reproduce the file from the tag: a clean checkout at this ref,
+      # `make optimize`, then `sha256sum target/wasm32v1-none/release/*.optimized.wasm`.
+      # The deterministic release build makes the sums reproducible.
+      - name: Compute SHA256 checksums for optimized wasms
+        id: checksums
+        run: |
+          set -euo pipefail
+          mkdir -p dist/wasm
+          CONTRACTS="escrow stream vesting recurring batch_payout"
+          # Collect optimized wasms into dist/wasm/ next to the checksums so
+          # every artifact attached to the release lives in one directory.
+          for c in $CONTRACTS; do
+            src="target/wasm32v1-none/release/sororail_${c}.optimized.wasm"
+            test -f "$src" || { echo "missing optimized wasm: $src" >&2; exit 1; }
+            cp "$src" "dist/wasm/sororail_${c}.optimized.wasm"
+          done
+          cd dist/wasm
+          # BSD/GNU-neutral "<hash>  <filename>" format accepted by both
+          # `sha256sum -c` (Linux) and `shasum -a 256 -c` (macOS).
+          sha256sum sororail_*.optimized.wasm > SHA256SUMS
+          echo "Computed checksums:"
+          cat SHA256SUMS
+          # Render them into the release notes block, GitHub-flavoured.
+          {
+            echo 'checksums<<EOF'
+            echo '## WASM SHA-256 checksums'
+            echo
+            echo 'Reproduce these by checking out this tag on a clean tree and running `make optimize`, then `sha256sum target/wasm32v1-none/release/sororail_*.optimized.wasm`.'
+            echo
+            echo '```'
+            cat SHA256SUMS
+            echo '```'
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+
+      # Changelog for this tag, driven by Conventional Commits via git-cliff
+      # (#444). Appended to the release body below the checksum block.
+      - name: Install git-cliff
+        uses: taiki-e/install-action@v2
+        with:
+          tool: git-cliff
+      - name: Generate changelog for this tag
+        id: changelog
+        run: |
+          set -euo pipefail
+          changelog="$(git-cliff --config cliff.toml --latest --strip all)"
+          {
+            echo 'release_notes<<EOF'
+            echo "$changelog"
+            echo
+            echo '---'
+            echo
+            echo "${{ steps.checksums.outputs.checksums }}"
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create Release with Specs, WASMs and checksums
         uses: softprops/action-gh-release@d99959edae48b5ffffd7b36b52d91f8b9b999d8b # v1
         with:
-          files: dist/specs/*.json
+          files: |
+            dist/specs/*.json
+            dist/wasm/sororail_*.optimized.wasm
+            dist/wasm/SHA256SUMS
+          body: ${{ steps.changelog.outputs.release_notes }}
           draft: false
           prerelease: false
-          generate_release_notes: true
+          generate_release_notes: false

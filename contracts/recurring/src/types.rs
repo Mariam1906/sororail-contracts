@@ -13,10 +13,10 @@ use sororail_common::math;
 ///
 /// # Periods never accrue retroactively
 ///
-/// `next_chargeable_at` is set to `now + period_seconds` at each charge --
-/// **not** advanced by one period from its previous value. A payee who forgets
-/// to charge for three months therefore cannot then charge three times; the
-/// skipped periods are simply gone.
+/// `charge` sets `next_chargeable_at` to `now + period_seconds`, forfeiting
+/// skipped periods. `charge_up_to` instead advances from the stored due date
+/// for each elapsed period, with an explicit per-call limit. Neither entry
+/// point allows a payment before the first full period after authorization.
 ///
 /// This is a deliberate consumer-protection choice, not an oversight. It costs
 /// the payee the revenue of periods they did not collect, and it guarantees
@@ -67,6 +67,15 @@ pub struct Authorization {
     /// is binary and nothing is computed from when it ended. See "Lifecycle
     /// modeling" in SPEC.md.
     pub cancelled: bool,
+    /// The latest ledger timestamp at which the authorization may be charged,
+    /// in seconds since the Unix epoch. `None` means no expiry.
+    pub valid_until: Option<u64>,
+    /// Optional cap on the amount per period. `None` means no cap.
+    pub max_amount: Option<i128>,
+    /// The new amount to take effect starting from the next period after a
+    /// successful charge. When a charge completes, this becomes
+    /// `amount_per_period` if set.
+    pub pending_amount_per_period: Option<i128>,
 }
 
 impl Authorization {
@@ -77,7 +86,10 @@ impl Authorization {
 
     /// Whether a charge may be taken at `at`.
     pub fn is_chargeable_at(&self, at: u64) -> bool {
-        !self.cancelled && !self.is_exhausted() && at >= self.next_chargeable_at
+        !self.cancelled
+            && !self.is_exhausted()
+            && at >= self.next_chargeable_at
+            && self.valid_until.map_or(true, |until| at < until)
     }
 
     /// Charges still permitted under the cap, if there is one.
@@ -105,6 +117,9 @@ mod tests {
             periods_charged,
             next_chargeable_at: 0,
             cancelled: false,
+            valid_until: None,
+            max_amount: None,
+            pending_amount_per_period: None,
         };
 
         let below = authorization(Some(3), 2);
@@ -137,6 +152,9 @@ mod tests {
             periods_charged,
             next_chargeable_at: 0,
             cancelled: false,
+            valid_until: None,
+            max_amount: None,
+            pending_amount_per_period: None,
         };
 
         // Not exhausted when periods_charged < max_periods
@@ -170,6 +188,9 @@ mod tests {
             periods_charged: 0,
             next_chargeable_at: first_chargeable_at,
             cancelled: false,
+            valid_until: None,
+            max_amount: None,
+            pending_amount_per_period: None,
         };
 
         // Before next_chargeable_at: not chargeable
@@ -181,5 +202,61 @@ mod tests {
 
         // After next_chargeable_at: chargeable
         assert!(authorization.is_chargeable_at(first_chargeable_at + 1));
+    }
+
+    #[test]
+    fn is_chargeable_at_respects_valid_until() {
+        let env = Env::default();
+        let valid_until = 2000u64;
+        let next_chargeable_at = 1000u64;
+        let authorization = Authorization {
+            payer: Address::generate(&env),
+            payee: Address::generate(&env),
+            token: Address::generate(&env),
+            amount_per_period: 100,
+            period_seconds: 100,
+            max_periods: None,
+            periods_charged: 0,
+            next_chargeable_at,
+            cancelled: false,
+            valid_until: Some(valid_until),
+            max_amount: None,
+            pending_amount_per_period: None,
+        };
+
+        // Before next_chargeable_at: not chargeable
+        assert!(!authorization.is_chargeable_at(next_chargeable_at - 1));
+
+        // At next_chargeable_at and before valid_until: chargeable
+        assert!(authorization.is_chargeable_at(next_chargeable_at));
+        assert!(authorization.is_chargeable_at(valid_until - 1));
+
+        // At or after valid_until: not chargeable
+        assert!(!authorization.is_chargeable_at(valid_until));
+        assert!(!authorization.is_chargeable_at(valid_until + 1));
+    }
+
+    #[test]
+    fn is_chargeable_at_allows_no_expiry() {
+        let env = Env::default();
+        let next_chargeable_at = 1000u64;
+        let authorization = Authorization {
+            payer: Address::generate(&env),
+            payee: Address::generate(&env),
+            token: Address::generate(&env),
+            amount_per_period: 100,
+            period_seconds: 100,
+            max_periods: None,
+            periods_charged: 0,
+            next_chargeable_at,
+            cancelled: false,
+            valid_until: None,
+            max_amount: None,
+            pending_amount_per_period: None,
+        };
+
+        assert!(authorization.is_chargeable_at(next_chargeable_at));
+        assert!(authorization.is_chargeable_at(next_chargeable_at + 1_000_000));
+        assert!(authorization.is_chargeable_at(u64::MAX));
     }
 }

@@ -16,7 +16,9 @@ this one. Nothing downstream can be correct until these are.
 > complete.** No mainnet addresses will be published before then. See
 > [SECURITY.md](SECURITY.md).
 
-The full org build specification lives in [SPEC.md](SPEC.md).
+The full org build specification lives in [SPEC.md](SPEC.md). Common questions
+about token decimals, TTL, and contract immutability are answered in
+[docs/faq.md](docs/faq.md).
 
 ## The contracts
 
@@ -31,6 +33,11 @@ The full org build specification lives in [SPEC.md](SPEC.md).
 
 Each is independently deployable. Composition happens at the call site, not
 through inheritance.
+
+For how the crates fit together — the one-position-per-instance model, the role
+of `common`, and the storage, auth, TTL and error-numbering rules — start with
+[docs/architecture.md](docs/architecture.md). The full event schema for
+indexers is in [docs/events.md](docs/events.md).
 
 ## Layout
 
@@ -77,6 +84,12 @@ make ci         # everything CI runs
 `cargo-nextest` is the test runner in CI. Install it locally with
 `cargo install cargo-nextest`.
 
+For token movement diagrams, see [docs/fund-flows.md](docs/fund-flows.md). For
+the pinned verifiable build and the CI hash comparison, see
+[docs/reproducible-builds.md](docs/reproducible-builds.md). For per-contract
+trust assumptions, mitigations and residual risks, see
+[docs/THREAT_MODEL.md](docs/THREAT_MODEL.md).
+
 ### Local quickstart smoke test
 
 The optional **Quickstart smoke** workflow is manually triggered from the
@@ -107,6 +120,10 @@ escrows longer than 30 days should schedule the contract's public `bump()`
 entry point before expiry. A caller pays the normal transaction and ledger
 write fees; if the instance has already been archived, it must first be
 restored through the network's archival-state restoration flow.
+
+See [TTL strategy](docs/TTL_STRATEGY.md) for the renewal schedule and operator
+responsibility, and [CLI invocation examples](docs/CONTRACT_INVOKE.md) for
+copy-pasteable testnet commands for every contract.
 
 
 ## Contract Immutability and Migration
@@ -175,16 +192,20 @@ revisiting: an id-keyed design would let a single deployment hold many
 positions, which matters for the payroll and dashboard screens the app is
 meant to have.
 
+## Security
+
+See [SECURITY.md](SECURITY.md) for the vulnerability reporting policy, the
+supported token assumptions (SEP-41 compliant, standard tokens only — fee-on-transfer,
+rebasing and callback tokens are out of scope), and the automated audit setup.
+
+Do not report vulnerabilities through public issues.
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). Issues labelled `good-first-issue` are
 scoped so that someone new to Soroban can complete them.
 
+
 ## License
 
 Apache-2.0. See [LICENSE](LICENSE).
-
-
-## Updates
-
-Updated documentation for recent changes.

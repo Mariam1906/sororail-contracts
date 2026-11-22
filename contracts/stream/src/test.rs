@@ -5,7 +5,8 @@
 use soroban_sdk::{
     map,
     testutils::{
-        storage::Instance as _, Address as _, Events as _, Ledger as _, MockAuth, MockAuthInvoke,
+        storage::Instance as _, Address as _, Events as _, IssuerFlags, Ledger as _, MockAuth,
+        MockAuthInvoke,
     },
     token::{StellarAssetClient, TokenClient},
     vec,
@@ -25,6 +26,7 @@ mod cancel;
 mod create;
 mod events;
 mod extend;
+mod fee_on_transfer;
 mod lifecycle;
 mod properties;
 mod top_up;

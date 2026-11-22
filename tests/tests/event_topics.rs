@@ -235,6 +235,7 @@ fn every_public_event_has_a_pinned_topic_name() {
     pinned.sort();
     let expected = vec![
         ("batch_payout", "Executed", "executed"),
+        ("batch_payout", "ExecutedMany", "executed_many"),
         ("escrow", "Cancelled", "cancelled"),
         ("escrow", "Created", "created"),
         ("escrow", "Disputed", "disputed"),
@@ -242,6 +243,7 @@ fn every_public_event_has_a_pinned_topic_name() {
         ("escrow", "Refunded", "refunded"),
         ("escrow", "Released", "released"),
         ("escrow", "Resolved", "resolved"),
+        ("recurring", "AmountUpdated", "amount_updated"),
         ("recurring", "Authorized", "authorized"),
         ("recurring", "Cancelled", "cancelled"),
         ("recurring", "Charged", "charged"),

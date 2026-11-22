@@ -183,11 +183,12 @@ Scheduled release against a schedule, with a cliff.
 Pull-based authorization for subscriptions. The payer authorizes a cap and cadence; the payee pulls within it.
 
 - `authorize(payer, payee, token, amount_per_period, period_seconds, max_periods: Option<u32>)` — rejects `payer == payee` with `IdenticalParties`
-- `charge()` — callable by payee, at most once per elapsed period
+- `charge()` — callable by payee, pulls one due period and resets the next due time to `now + period_seconds`
+- `charge_up_to(max_periods: u32)` — callable by payee, pulls up to the call limit of scheduled periods that have elapsed; also bounded by the authorization's remaining cap
 - `cancel(caller)` — callable by either party, effective immediately
 - `next_chargeable_at()` — view
-- Must not accrue chargeable periods retroactively when a payee skips one. A payee who forgets to charge for three months cannot then charge three times. This is a deliberate consumer-protection choice; document it prominently.
-- Consequence for automated payees: whoever drives `charge` on a schedule (for example the scheduled recurring runs in [`apps/web`'s Payroll feature](#appsweb)) gets no catch-up after downtime, a failed cron, or a skipped job. The next successful `charge` collects exactly one period however many have elapsed, and every other elapsed period is forfeited. A late charge also restarts the cadence from the moment it lands (`next_chargeable_at = now + period_seconds`), so repeated lateness drifts the schedule. The rationale is documented on `recurring::Authorization`.
+- Authorization is non-retroactive: the first payment cannot be taken until one full period after `authorize`. `charge` forfeits missed periods and restarts the cadence from the moment it lands. `charge_up_to` is an explicit opt-in to catch up only fully elapsed scheduled periods, with a caller-provided maximum per call; it never charges a partial initial period.
+- A keeper can poll `is_chargeable` and call either charge entry point. The one-payment `charge` is appropriate when missed periods should be forfeited; `charge_up_to` is for operators who intentionally want bounded catch-up after downtime. See [`docs/recurring-keepers.md`](docs/recurring-keepers.md) for retry and fee guidance.
 - The pull works through the token's allowance: the payer `approve`s this contract as spender and `charge` uses `transfer_from`. The contract holds no funds, and revoking the allowance stops charges without touching the contract.
 
 #### `batch_payout`
@@ -264,6 +265,7 @@ Every public function, and which address(es) may call it. "—" means the functi
 | `vesting`      | `vested_amount`, `claimable`, `schedule`, `remaining`, `bump`, `get` | —                      |
 | `recurring`    | `authorize`             | payer                                                           |
 | `recurring`    | `charge`                | payee                                                            |
+| `recurring`    | `charge_up_to`          | payee                                                            |
 | `recurring`    | `cancel`                | payer or payee                                                  |
 | `recurring`    | `next_chargeable_at`, `is_chargeable`, `remaining_periods`, `bump`, `get` | —            |
 | `batch_payout` | `execute`               | funder                                                          |

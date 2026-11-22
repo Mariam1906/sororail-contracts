@@ -3,6 +3,65 @@ use sororail_common::{auth, math, Error};
 
 use crate::{events, storage, types::Authorization};
 
+fn charge_one_period(
+    env: &Env,
+    authorization: &mut Authorization,
+    now: u64,
+    reset_schedule_from_now: bool,
+) -> Result<i128, Error> {
+    let amount = authorization.amount_per_period;
+    authorization.periods_charged = authorization
+        .periods_charged
+        .checked_add(1)
+        .ok_or(Error::Overflow)?;
+    let next_chargeable_at = if reset_schedule_from_now {
+        now.checked_add(authorization.period_seconds)
+    } else {
+        authorization
+            .next_chargeable_at
+            .checked_add(authorization.period_seconds)
+    }
+    .ok_or(Error::InvalidTimeRange)?;
+    authorization.next_chargeable_at = next_chargeable_at;
+    // The period is consumed and persisted here, *before* `transfer_from`
+    // moves any funds. This ordering is intentional: Soroban aborts the
+    // whole invocation and rolls back every state change when a host call
+    // (the token transfer) traps, so a failed transfer cannot leave the
+    // period consumed -- the `periods_charged` bump and the advanced
+    // `next_chargeable_at` are reverted together with the failed call.
+    // That rollback, not the save-first ordering itself, is what makes
+    // this safe; it also means a reentrant token sees the already-advanced
+    // `next_chargeable_at` and cannot charge the same period twice.
+    // Compare `escrow::pay`, where persisting state before the token call
+    // serves reentrancy protection specifically.
+    storage::save(env, authorization);
+
+    token::TokenClient::new(env, &authorization.token).transfer_from(
+        &env.current_contract_address(),
+        &authorization.payer,
+        &authorization.payee,
+        &amount,
+    );
+
+    // Apply pending amount if one was scheduled.
+    if let Some(pending) = authorization.pending_amount_per_period.take() {
+        authorization.amount_per_period = pending;
+        storage::save(env, &authorization);
+    }
+
+    events::Charged {
+        payee: authorization.payee.clone(),
+        payer: authorization.payer.clone(),
+        amount,
+        period_index: authorization.periods_charged,
+        periods_charged: authorization.periods_charged,
+        next_chargeable_at: authorization.next_chargeable_at,
+        remaining: authorization.remaining_periods(),
+    }
+    .publish(env);
+    Ok(amount)
+}
+
 #[contract]
 pub struct RecurringContract;
 
@@ -29,6 +88,7 @@ impl RecurringContract {
         amount_per_period: i128,
         period_seconds: u64,
         max_periods: Option<u32>,
+        valid_until: Option<u64>,
     ) -> Result<(), Error> {
         if storage::is_initialized(&env) {
             return Err(Error::AlreadyInitialized);
@@ -62,6 +122,9 @@ impl RecurringContract {
             periods_charged: 0,
             next_chargeable_at: first_chargeable_at,
             cancelled: false,
+            valid_until,
+            max_amount: None,
+            pending_amount_per_period: None,
         };
         storage::save(&env, &authorization);
 
@@ -73,6 +136,7 @@ impl RecurringContract {
             period_seconds,
             max_periods,
             first_chargeable_at,
+            valid_until,
         }
         .publish(&env);
         Ok(())
@@ -102,44 +166,94 @@ impl RecurringContract {
         if now < authorization.next_chargeable_at {
             return Err(Error::RecurringPeriodNotElapsed);
         }
+        if let Some(until) = authorization.valid_until {
+            if now >= until {
+                return Err(Error::RecurringExhausted);
+            }
+        }
 
-        let amount = authorization.amount_per_period;
-        authorization.periods_charged = authorization
-            .periods_charged
-            .checked_add(1)
-            .ok_or(Error::Overflow)?;
-        authorization.next_chargeable_at = now
-            .checked_add(authorization.period_seconds)
-            .ok_or(Error::InvalidTimeRange)?;
-        // The period is consumed and persisted here, *before* `transfer_from`
-        // moves any funds. This ordering is intentional: Soroban aborts the
-        // whole invocation and rolls back every state change when a host call
-        // (the token transfer) traps, so a failed transfer cannot leave the
-        // period consumed -- the `periods_charged` bump and the advanced
-        // `next_chargeable_at` are reverted together with the failed call.
-        // That rollback, not the save-first ordering itself, is what makes
-        // this safe; it also means a reentrant token sees the already-advanced
-        // `next_chargeable_at` and cannot charge the same period twice.
-        // Compare `escrow::pay`, where persisting state before the token call
-        // serves reentrancy protection specifically.
+        charge_one_period(&env, &mut authorization, now, true)
+    }
+
+    /// Pulls up to `max_periods` elapsed payments in one call.
+    ///
+    /// Callable by the payee. Unlike `charge`, this advances the schedule one
+    /// period at a time from its existing due date, so missed periods can be
+    /// collected only after their scheduled timestamps have elapsed. The
+    /// first scheduled timestamp is still one full period after authorization.
+    /// The authorization's `max_periods` cap applies across all calls.
+    ///
+    /// Returns the total amount transferred. A value of zero for
+    /// `max_periods` is invalid. If no period is due, this returns
+    /// `RecurringPeriodNotElapsed`.
+    pub fn charge_up_to(env: Env, max_periods: u32) -> Result<i128, Error> {
+        let mut authorization = storage::load(&env)?;
+        authorization.payee.require_auth();
+        if max_periods == 0 {
+            return Err(Error::InvalidAmount);
+        }
+        if authorization.cancelled {
+            return Err(Error::RecurringCancelled);
+        }
+        if authorization.is_exhausted() {
+            return Err(Error::RecurringExhausted);
+        }
+
+        let now = env.ledger().timestamp();
+        if now < authorization.next_chargeable_at {
+            return Err(Error::RecurringPeriodNotElapsed);
+        }
+        if let Some(until) = authorization.valid_until {
+            if now >= until {
+                return Err(Error::RecurringExhausted);
+            }
+        }
+
+        let mut total = 0i128;
+        let mut charged = 0u32;
+        while charged < max_periods
+            && now >= authorization.next_chargeable_at
+            && !authorization.is_exhausted()
+            && authorization
+                .valid_until
+                .map_or(true, |until| authorization.next_chargeable_at < until)
+        {
+            let amount = charge_one_period(&env, &mut authorization, now, false)?;
+            total = math::add(total, amount)?;
+            charged = charged.checked_add(1).ok_or(Error::Overflow)?;
+        }
+        Ok(total)
+    }
+
+    /// Updates the amount per period, effective from the next period.
+    ///
+    /// Requires payer authorization. The in-flight period (the one ready to
+    /// charge but not yet charged) uses the old amount; the update applies
+    /// starting from the charge after that.
+    ///
+    /// If `max_amount` was set, the new amount cannot exceed it.
+    pub fn update_amount(env: Env, new_amount: i128) -> Result<(), Error> {
+        let mut authorization = storage::load(&env)?;
+        authorization.payer.require_auth();
+
+        math::require_positive(new_amount)?;
+        if let Some(max) = authorization.max_amount {
+            if new_amount > max {
+                return Err(Error::InvalidAmount);
+            }
+        }
+
+        let old_amount = authorization.amount_per_period;
+        authorization.pending_amount_per_period = Some(new_amount);
         storage::save(&env, &authorization);
 
-        token::TokenClient::new(&env, &authorization.token).transfer_from(
-            &env.current_contract_address(),
-            &authorization.payer,
-            &authorization.payee,
-            &amount,
-        );
-
-        events::Charged {
-            payee: authorization.payee.clone(),
-            payer: authorization.payer.clone(),
-            amount,
-            periods_charged: authorization.periods_charged,
-            next_chargeable_at: authorization.next_chargeable_at,
+        events::AmountUpdated {
+            old_amount,
+            new_amount,
+            effective_from: authorization.next_chargeable_at + authorization.period_seconds,
         }
         .publish(&env);
-        Ok(amount)
+        Ok(())
     }
 
     /// Cancels the authorization, effective immediately.

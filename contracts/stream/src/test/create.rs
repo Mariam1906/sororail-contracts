@@ -231,6 +231,8 @@ fn entry_points_error_before_create() {
     assert_eq!(c.try_extend(&STOP), Err(Ok(Error::NotInitialized)));
     assert_eq!(c.try_balance_of(&who), Err(Ok(Error::NotInitialized)));
     assert_eq!(c.try_remaining(), Err(Ok(Error::NotInitialized)));
+    assert_eq!(c.try_bump(), Err(Ok(Error::NotInitialized)));
+    assert_eq!(c.try_get(), Err(Ok(Error::NotInitialized)));
 }
 
 #[test]

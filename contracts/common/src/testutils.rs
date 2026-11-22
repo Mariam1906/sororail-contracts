@@ -162,3 +162,360 @@ pub fn assert_conserved(token: &TokenClient<'_>, participants: &[Address], expec
         "token balances for {participants:?} do not sum to {expected_total}"
     );
 }
+
+// ─── Fee-on-transfer mock token (#438) ──────────────────────────────────────
+//
+// Several SoroRail tests need a token that does not conserve value on
+// transfer — bridged assets with inner-fee hooks, deflationary tokens, LPs
+// that charge on swap. Rather than each test re-inventing the shape, this
+// module ships a reusable mock behind the `testutils` feature. The contract
+// implements the `token::TokenInterface` methods the SoroRail contracts call
+// (`balance`, `transfer`, `transfer_from`, `approve`, `allowance`,
+// `decimals`, `name`, `symbol`); on every `transfer`/`transfer_from` it
+// skims `fee_bps` basis points to a configured sink and credits the net
+// amount to the recipient. The caller is debited the gross amount, matching
+// how real FOT tokens work from the sender's perspective.
+//
+// The mock is intentionally minimal: no supply cap, no pause, no admin
+// gating. `mint_for_tests` adds balance from thin air; production code must
+// never reach it because the whole module is gated by the `testutils`
+// feature.
+
+use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, String, Symbol};
+
+/// Storage keys used by {@link FeeOnTransferToken}. One instance per
+/// deployed contract address.
+#[contracttype]
+#[derive(Clone)]
+pub enum FeeTokenKey {
+    /// `fee_bps` (u32), basis points skimmed on every transfer.
+    FeeBps,
+    /// `fee_sink` (Address), where skimmed fees land.
+    FeeSink,
+    /// Metadata the Soroban `token::TokenInterface` requires.
+    Decimals,
+    Name,
+    Symbol,
+    /// Per-address balance.
+    Balance(Address),
+    /// `(from, spender)` allowance pair with its expiration.
+    Allowance(Address, Address),
+}
+
+#[contracttype]
+#[derive(Clone)]
+pub struct FeeTokenAllowance {
+    pub amount: i128,
+    pub expiration_ledger: u32,
+}
+
+/// Mock token that skims `fee_bps` basis points on every transfer.
+///
+/// Register it with a `TestEnv`, initialize it with `init`, and use it from
+/// any contract that accepts a `token::TokenInterface`. See
+/// {@link FeeOnTransferTokenHelper} below for the one-call setup most tests
+/// want.
+#[contract]
+pub struct FeeOnTransferToken;
+
+/// Event topic emitted on every skim, so tests can assert fees were taken.
+const TOPIC_FEE_SKIMMED: Symbol = symbol_short!("fee_skim");
+
+#[contractimpl]
+impl FeeOnTransferToken {
+    /// One-time setup. `fee_bps` is clamped to `[0, 10_000]` by assertion
+    /// so a mis-configured test fails loudly rather than silently reducing
+    /// every transfer to zero.
+    pub fn init(
+        env: Env,
+        fee_sink: Address,
+        fee_bps: u32,
+        decimals: u32,
+        name: String,
+        symbol: String,
+    ) {
+        assert!(fee_bps <= 10_000, "fee_bps must be <= 10_000 (100%)");
+        let storage = env.storage().instance();
+        storage.set(&FeeTokenKey::FeeBps, &fee_bps);
+        storage.set(&FeeTokenKey::FeeSink, &fee_sink);
+        storage.set(&FeeTokenKey::Decimals, &decimals);
+        storage.set(&FeeTokenKey::Name, &name);
+        storage.set(&FeeTokenKey::Symbol, &symbol);
+    }
+
+    /// Test-only: bump the fee without re-initialising. Not part of the
+    /// token interface.
+    pub fn set_fee_bps(env: Env, fee_bps: u32) {
+        assert!(fee_bps <= 10_000);
+        env.storage().instance().set(&FeeTokenKey::FeeBps, &fee_bps);
+    }
+
+    /// Test-only: credit `amount` to `to` with no counterparty debit. The
+    /// real production path is minting via a SAC; this is the test seam.
+    pub fn mint_for_tests(env: Env, to: Address, amount: i128) {
+        assert!(amount >= 0, "mint_for_tests cannot mint negative");
+        let current = read_balance(&env, &to);
+        write_balance(
+            &env,
+            &to,
+            current.checked_add(amount).expect("balance overflow"),
+        );
+    }
+
+    // ── token::TokenInterface ─────────────────────────────────────────────
+
+    pub fn balance(env: Env, id: Address) -> i128 {
+        read_balance(&env, &id)
+    }
+
+    #[allow(deprecated)]
+    pub fn transfer(env: Env, from: Address, to: Address, amount: i128) {
+        from.require_auth();
+        assert!(amount >= 0, "transfer amount must be non-negative");
+        let fee = fee_on(&env, amount);
+        let net = amount.checked_sub(fee).expect("fee > amount");
+
+        let from_balance = read_balance(&env, &from);
+        assert!(from_balance >= amount, "insufficient balance");
+        write_balance(&env, &from, from_balance - amount);
+
+        let to_balance = read_balance(&env, &to);
+        write_balance(
+            &env,
+            &to,
+            to_balance.checked_add(net).expect("balance overflow"),
+        );
+
+        if fee > 0 {
+            let sink: Address = env.storage().instance().get(&FeeTokenKey::FeeSink).unwrap();
+            let sink_balance = read_balance(&env, &sink);
+            write_balance(
+                &env,
+                &sink,
+                sink_balance.checked_add(fee).expect("sink overflow"),
+            );
+            env.events()
+                .publish((TOPIC_FEE_SKIMMED, from.clone(), to.clone()), (amount, fee));
+        }
+    }
+
+    #[allow(deprecated)]
+    pub fn transfer_from(env: Env, spender: Address, from: Address, to: Address, amount: i128) {
+        spender.require_auth();
+        assert!(amount >= 0, "transfer amount must be non-negative");
+        spend_allowance(&env, &from, &spender, amount);
+
+        let fee = fee_on(&env, amount);
+        let net = amount.checked_sub(fee).expect("fee > amount");
+
+        let from_balance = read_balance(&env, &from);
+        assert!(from_balance >= amount, "insufficient balance");
+        write_balance(&env, &from, from_balance - amount);
+
+        let to_balance = read_balance(&env, &to);
+        write_balance(
+            &env,
+            &to,
+            to_balance.checked_add(net).expect("balance overflow"),
+        );
+
+        if fee > 0 {
+            let sink: Address = env.storage().instance().get(&FeeTokenKey::FeeSink).unwrap();
+            let sink_balance = read_balance(&env, &sink);
+            write_balance(
+                &env,
+                &sink,
+                sink_balance.checked_add(fee).expect("sink overflow"),
+            );
+            env.events()
+                .publish((TOPIC_FEE_SKIMMED, from.clone(), to.clone()), (amount, fee));
+        }
+    }
+
+    pub fn approve(
+        env: Env,
+        from: Address,
+        spender: Address,
+        amount: i128,
+        expiration_ledger: u32,
+    ) {
+        from.require_auth();
+        assert!(amount >= 0, "allowance cannot be negative");
+        env.storage().temporary().set(
+            &FeeTokenKey::Allowance(from, spender),
+            &FeeTokenAllowance {
+                amount,
+                expiration_ledger,
+            },
+        );
+    }
+
+    pub fn allowance(env: Env, from: Address, spender: Address) -> i128 {
+        read_allowance(&env, &from, &spender).amount
+    }
+
+    pub fn decimals(env: Env) -> u32 {
+        env.storage()
+            .instance()
+            .get(&FeeTokenKey::Decimals)
+            .unwrap_or(7)
+    }
+
+    pub fn name(env: Env) -> String {
+        env.storage()
+            .instance()
+            .get(&FeeTokenKey::Name)
+            .unwrap_or_else(|| String::from_str(&env, "FeeMock"))
+    }
+
+    pub fn symbol(env: Env) -> String {
+        env.storage()
+            .instance()
+            .get(&FeeTokenKey::Symbol)
+            .unwrap_or_else(|| String::from_str(&env, "FEE"))
+    }
+
+    pub fn burn(env: Env, from: Address, amount: i128) {
+        from.require_auth();
+        assert!(amount >= 0);
+        let b = read_balance(&env, &from);
+        assert!(b >= amount, "insufficient balance");
+        write_balance(&env, &from, b - amount);
+    }
+
+    pub fn burn_from(env: Env, spender: Address, from: Address, amount: i128) {
+        spender.require_auth();
+        assert!(amount >= 0);
+        spend_allowance(&env, &from, &spender, amount);
+        let b = read_balance(&env, &from);
+        assert!(b >= amount, "insufficient balance");
+        write_balance(&env, &from, b - amount);
+    }
+}
+
+fn read_balance(env: &Env, id: &Address) -> i128 {
+    env.storage()
+        .persistent()
+        .get(&FeeTokenKey::Balance(id.clone()))
+        .unwrap_or(0)
+}
+
+fn write_balance(env: &Env, id: &Address, amount: i128) {
+    env.storage()
+        .persistent()
+        .set(&FeeTokenKey::Balance(id.clone()), &amount);
+}
+
+fn read_allowance(env: &Env, from: &Address, spender: &Address) -> FeeTokenAllowance {
+    env.storage()
+        .temporary()
+        .get(&FeeTokenKey::Allowance(from.clone(), spender.clone()))
+        .unwrap_or(FeeTokenAllowance {
+            amount: 0,
+            expiration_ledger: 0,
+        })
+}
+
+fn spend_allowance(env: &Env, from: &Address, spender: &Address, amount: i128) {
+    let current = read_allowance(env, from, spender);
+    assert!(current.amount >= amount, "insufficient allowance");
+    env.storage().temporary().set(
+        &FeeTokenKey::Allowance(from.clone(), spender.clone()),
+        &FeeTokenAllowance {
+            amount: current.amount - amount,
+            expiration_ledger: current.expiration_ledger,
+        },
+    );
+}
+
+fn fee_on(env: &Env, amount: i128) -> i128 {
+    let bps: u32 = env
+        .storage()
+        .instance()
+        .get(&FeeTokenKey::FeeBps)
+        .unwrap_or(0);
+    if bps == 0 || amount == 0 {
+        return 0;
+    }
+    // Round the fee down so `net = amount - fee` is always >= 0.
+    (amount * i128::from(bps)) / 10_000
+}
+
+/// One-call helper the test suites expect: registers a {@link FeeOnTransferToken}
+/// in the given env, initialises it with `fee_bps` basis points (e.g. `25`
+/// for 0.25%), and returns `(address, fee_sink)`. Mint balances with
+/// `FeeOnTransferTokenClient::new(env, &address).mint_for_tests(&who, &amount)`.
+pub fn deploy_fee_on_transfer_token(env: &Env, fee_bps: u32) -> (Address, Address) {
+    let contract_id = env.register(FeeOnTransferToken, ());
+    let sink = Address::generate(env);
+    FeeOnTransferTokenClient::new(env, &contract_id).init(
+        &sink,
+        &fee_bps,
+        &7u32,
+        &String::from_str(env, "FeeMockToken"),
+        &String::from_str(env, "FEE"),
+    );
+    (contract_id, sink)
+}
+
+#[cfg(test)]
+mod fee_token_smoke {
+    use super::*;
+
+    #[test]
+    fn skims_the_configured_basis_points_on_transfer() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (token_addr, sink) = deploy_fee_on_transfer_token(&env, 100); // 1%
+        let client = FeeOnTransferTokenClient::new(&env, &token_addr);
+
+        let alice = Address::generate(&env);
+        let bob = Address::generate(&env);
+        client.mint_for_tests(&alice, &10_000);
+
+        client.transfer(&alice, &bob, &10_000);
+
+        assert_eq!(client.balance(&alice), 0);
+        // 1% skimmed to the sink, 99% delivered.
+        assert_eq!(client.balance(&bob), 9_900);
+        assert_eq!(client.balance(&sink), 100);
+    }
+
+    #[test]
+    fn zero_fee_behaves_like_an_ordinary_token() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (token_addr, _sink) = deploy_fee_on_transfer_token(&env, 0);
+        let client = FeeOnTransferTokenClient::new(&env, &token_addr);
+
+        let alice = Address::generate(&env);
+        let bob = Address::generate(&env);
+        client.mint_for_tests(&alice, &1_000);
+
+        client.transfer(&alice, &bob, &250);
+
+        assert_eq!(client.balance(&alice), 750);
+        assert_eq!(client.balance(&bob), 250);
+    }
+
+    #[test]
+    fn transfer_from_respects_allowance_and_skims_the_fee() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (token_addr, sink) = deploy_fee_on_transfer_token(&env, 50); // 0.5%
+        let client = FeeOnTransferTokenClient::new(&env, &token_addr);
+
+        let owner = Address::generate(&env);
+        let spender = Address::generate(&env);
+        let dest = Address::generate(&env);
+        client.mint_for_tests(&owner, &2_000);
+        client.approve(&owner, &spender, &1_000, &(env.ledger().sequence() + 100));
+
+        client.transfer_from(&spender, &owner, &dest, &1_000);
+
+        assert_eq!(client.balance(&owner), 1_000);
+        assert_eq!(client.balance(&dest), 995);
+        assert_eq!(client.balance(&sink), 5);
+        assert_eq!(client.allowance(&owner, &spender), 0);
+    }
+}

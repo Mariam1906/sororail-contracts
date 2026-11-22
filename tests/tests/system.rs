@@ -957,6 +957,155 @@ fn recurring_subscription_charges_once_across_several_periods() {
     s.assert_nothing_lost(&parties);
 }
 
+/// Compose a stream and a vesting grant through one actor (#437): an
+/// employer funds a stream for a contractor, cancels it partway through, and
+/// uses the refunded unearned portion as the capital for a new vesting grant
+/// to the same person. The invariant is total conservation across BOTH
+/// contracts: every satoshi the employer committed is accounted for — paid
+/// to the contractor through the stream, held for them in the vesting grant,
+/// or back with the employer.
+#[test]
+fn cancelled_stream_refund_funds_a_new_vesting_grant() {
+    let s = System::new();
+    let contractor = Address::generate(&s.env);
+    let parties = [&contractor];
+
+    // --- Stream: 10/sec for 1000s = 10_000 total, cancellable. ---
+    let stream_rate: i128 = 10;
+    let stream_duration: u64 = 1_000;
+    let stream_total: i128 = stream_rate * i128::from(stream_duration);
+    s.stream.create(
+        &s.employer,
+        &contractor,
+        &s.token.address,
+        &stream_rate,
+        &START,
+        &(START + stream_duration),
+        &true,
+    );
+    assert_eq!(s.balance(&s.stream.address), stream_total);
+    assert_eq!(s.balance(&s.employer), MINT - stream_total);
+    assert_eq!(s.balance(&contractor), 0);
+    s.assert_nothing_lost(&parties);
+
+    // --- A quarter of the way through, cancel the stream. ---
+    s.at(START + stream_duration / 4);
+    s.stream.cancel();
+    let earned_so_far: i128 = stream_rate * i128::from(stream_duration / 4);
+    let refund = stream_total - earned_so_far;
+    assert_eq!(s.balance(&contractor), earned_so_far);
+    assert_eq!(s.balance(&s.stream.address), 0);
+    // The refund went back to the employer.
+    assert_eq!(s.balance(&s.employer), MINT - earned_so_far);
+    s.assert_nothing_lost(&parties);
+
+    // --- Fund a new vesting grant for the same contractor with exactly
+    // the refunded amount — no new capital from the employer. ---
+    let employer_before_vest = s.balance(&s.employer);
+    let vest_start = s.env.ledger().timestamp();
+    let vest_duration: u64 = 500;
+    s.vesting.create(
+        &s.employer,
+        &contractor,
+        &s.token.address,
+        &refund,
+        &vest_start,
+        &0, // no cliff
+        &vest_duration,
+        &true,
+    );
+    assert_eq!(s.balance(&s.vesting.address), refund);
+    assert_eq!(s.balance(&s.employer), employer_before_vest - refund);
+    s.assert_nothing_lost(&parties);
+
+    // --- Fast-forward to full vest; contractor claims the remainder. ---
+    s.at(vest_start + vest_duration);
+    let claimed = s.vesting.claim();
+    assert_eq!(claimed, refund);
+    assert_eq!(s.balance(&contractor), earned_so_far + refund);
+    assert_eq!(s.balance(&s.vesting.address), 0);
+    // Employer is back at the pre-stream baseline minus everything the
+    // contractor received: stream earnings + vesting payout = original
+    // stream deposit. Nothing leaked.
+    assert_eq!(s.balance(&s.employer), MINT - stream_total);
+    s.assert_nothing_lost(&parties);
+}
+
+/// Compose two contracts at the call site (#436): an escrow is released to a
+/// treasury account which, in the same workflow, fans the funds out to a list
+/// of recipients via `batch_payout`. The composition is advertised in the
+/// README but was never pinned down by a test — this seals that in. Every
+/// balance along the way is asserted: funder, escrow holding, treasury
+/// before/after the fan-out, each recipient, and finally system conservation.
+#[test]
+fn escrow_release_into_batch_payout_fans_out_funds_to_recipients() {
+    let s = System::new();
+    let treasury = Address::generate(&s.env);
+    let alice = Address::generate(&s.env);
+    let bob = Address::generate(&s.env);
+    let carol = Address::generate(&s.env);
+    let parties = [&treasury, &alice, &bob, &carol];
+
+    // --- The employer funds an escrow in favour of the treasury. ---
+    let escrowed = 1_000_000;
+    s.escrow.init(
+        &s.employer,
+        &treasury,
+        &None,
+        &s.token.address,
+        &escrowed,
+        &(START + MONTH),
+    );
+    s.escrow.fund();
+    assert_eq!(s.balance(&s.escrow.address), escrowed);
+    assert_eq!(s.balance(&s.employer), MINT - escrowed);
+    assert_eq!(s.balance(&treasury), 0);
+    s.assert_nothing_lost(&parties);
+
+    // --- The escrow is released; the treasury now holds the full amount. ---
+    s.escrow.release(&s.employer);
+    assert_eq!(s.balance(&s.escrow.address), 0);
+    assert_eq!(s.balance(&treasury), escrowed);
+    s.assert_nothing_lost(&parties);
+
+    // --- The treasury fans the funds out via `batch_payout`. The totals
+    // match the escrow exactly: nothing stays at the treasury, nothing is
+    // left in the batch contract. ---
+    let a_share: i128 = 400_000;
+    let b_share: i128 = 350_000;
+    let c_share: i128 = 250_000;
+    assert_eq!(a_share + b_share + c_share, escrowed);
+
+    let payroll = vec![
+        &s.env,
+        Payment {
+            to: alice.clone(),
+            amount: a_share,
+        },
+        Payment {
+            to: bob.clone(),
+            amount: b_share,
+        },
+        Payment {
+            to: carol.clone(),
+            amount: c_share,
+        },
+    ];
+    let receipt = s.batch.execute(&treasury, &s.token.address, &payroll);
+    assert_eq!(receipt.count, 3);
+    assert_eq!(receipt.total, escrowed);
+
+    assert_eq!(s.balance(&alice), a_share);
+    assert_eq!(s.balance(&bob), b_share);
+    assert_eq!(s.balance(&carol), c_share);
+    // `batch_payout` is stateless and must never hold a balance after a run.
+    assert_eq!(s.balance(&s.batch.address), 0);
+    assert_eq!(s.balance(&treasury), 0);
+    // The employer paid out exactly the escrowed amount and nothing more.
+    assert_eq!(s.balance(&s.employer), MINT - escrowed);
+    s.assert_nothing_lost(&parties);
+}
+
 /// Every stateful contract reports `NotInitialized` from a state-backed view
 /// before its setup entry point has run. `batch_payout` is stateless, so it has
 /// no initialization state to reject.

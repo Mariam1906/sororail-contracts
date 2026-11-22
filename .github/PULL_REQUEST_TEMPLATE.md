@@ -5,7 +5,7 @@
 ## Checklist
 
 - [ ] Tests added (auth failure for new privileged entry points; arithmetic edges)
-- [ ] `make ci` green locally (fmt, clippy, tests, wasm build)
+- [ ] `make check` green locally (fmt, clippy, tests, wasm build, docs, deployments)
 - [ ] Docs updated when public behavior changes
 - [ ] No unrelated changes
 - [ ] Breaking changes called out explicitly below (if any)

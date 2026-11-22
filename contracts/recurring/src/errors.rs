@@ -10,13 +10,13 @@
 //! | [`Error::NotInitialized`] | any entry point before `authorize` |
 //! | [`Error::IdenticalParties`] | `authorize` with `payer == payee` |
 //! | [`Error::Unauthorized`] | `cancel` by someone who is neither party |
-//! | [`Error::InvalidAmount`] | non-positive `amount_per_period`, or `max_periods == Some(0)` |
+//! | [`Error::InvalidAmount`] | non-positive `amount_per_period`, zero `max_periods` at authorization, or zero `max_periods` passed to `charge_up_to` |
 //! | [`Error::InvalidDuration`] | zero `period_seconds` |
-//! | [`Error::InvalidTimeRange`] | `authorize` or `charge` scheduling the next charge past `u64::MAX` |
+//! | [`Error::InvalidTimeRange`] | `authorize`, `charge`, or `charge_up_to` scheduling the next charge past `u64::MAX` |
 //! | [`Error::Overflow`] | `periods_charged` exceeding `u32` |
 //! | [`Error::RecurringCancelled`] | `charge` or `cancel` after cancellation |
-//! | [`Error::RecurringPeriodNotElapsed`] | `charge` before `next_chargeable_at` |
-//! | [`Error::RecurringExhausted`] | `charge` once `max_periods` is reached |
+//! | [`Error::RecurringPeriodNotElapsed`] | `charge` or `charge_up_to` before `next_chargeable_at` |
+//! | [`Error::RecurringExhausted`] | `charge` or `charge_up_to` once `max_periods` is reached |
 //!
 //! # What is absent, and why
 //!

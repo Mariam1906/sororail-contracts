@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Per-contract crate READMEs rendered through rustdoc, a per-contract threat
+  model, `source_repo` contract metadata, and a regression test proving that a
+  deauthorized recipient cannot corrupt a stream on a flagged Stellar Asset
+  Contract (#439, #442, #450, #451).
+- CLI invocation examples, TTL operator guidance, and a CI check requiring an
+  Unreleased changelog entry for contract-affecting pull requests (#469, #470,
+  #471).
+- Storage-footprint regression check: stateful contracts retain exactly one
+  instance-storage position and batch payout remains stateless (#468).
+
 - Workspace test `tests/tests/event_topics.rs` asserting every `#[contractevent]` declares exactly `[<crate name>, <snake_case action>]` topics (#64).
 - SPEC.md "Cross-contract design conventions": when an entry point takes a `caller` argument vs. calling `require_auth` on a fixed party (#63), and when a lifecycle is a `State` enum vs. an optional timestamp (#66).
 - CONTRIBUTING.md "Choosing an authorization pattern" (#63).

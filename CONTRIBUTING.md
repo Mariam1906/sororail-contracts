@@ -21,17 +21,43 @@ code. Scope discipline is the point of this project — see the non-goals in
 ```bash
 rustup target add wasm32v1-none
 cargo install cargo-nextest
-make ci          # fmt-check, lint, test, build
+make check       # fmt-check, lint, test, build, docs and deployment checks
 ```
+
+`make check` mirrors the required CI jobs. Run it before opening a PR.
+`make ci` is an alias for `make check` and is what CI itself executes.
 
 The toolchain is pinned in `rust-toolchain.toml`; rustup will honour it
 automatically.
+
+### Pre-commit hooks (recommended)
+
+A `.pre-commit-config.yaml` ships at the repo root. Install the hooks once
+so every commit is checked with `cargo fmt`, `cargo clippy` and the
+standard hygiene checks (trailing whitespace, newline-at-EOF, line endings,
+merge markers, large files):
+
+```bash
+# One-time install of the pre-commit framework itself.
+pip install pre-commit        # or: brew install pre-commit
+
+# Register the Git hooks in this repo.
+pre-commit install
+
+# One-off: run all hooks against every tracked file.
+pre-commit run --all-files
+```
+
+On a warm cache the hook suite finishes in well under 30 seconds. A
+failing fmt hook prints the diff and refuses the commit — fix with
+`cargo fmt --all` and commit again. A failing clippy hook exits on any
+new warning; fix the warning rather than suppress it.
 
 ## What a complete PR looks like
 
 - [ ] Tests added, including an authorization test for any new privileged entry
       point and edge cases for any new arithmetic
-- [ ] `make ci` green locally
+- [ ] `make check` green locally
 - [ ] Docs updated — a PR that changes public behavior without touching docs is
       incomplete
 - [ ] No unrelated changes
@@ -110,7 +136,7 @@ pub fn release(env: Env, caller: Address) -> Result<(), Error> {
 With several eligible signers the contract cannot know which one is acting, so
 the caller has to say, and it needs to be recorded for the event
 (`released_by`, `cancelled_by`, `raised_by`). The guard rejects an outsider
-with `Unauthorized` *before* any signature is requested, which is the
+with `Unauthorized` _before_ any signature is requested, which is the
 membership-before-auth rule above.
 
 Used by `escrow` (`release`, `refund`, `dispute`) and `recurring::cancel`.
@@ -132,14 +158,36 @@ Rules of thumb:
 - Never call `caller.require_auth()` on an unchecked `caller`. That proves the
   caller signed, not that it is allowed to act.
 - Either way, add an authorization test proving a wrong party is rejected.
+
 ## Conventions
 
 - **Commits:** [Conventional Commits](https://www.conventionalcommits.org),
   enforced in CI.
 - **Branching:** trunk-based. Short-lived branches, PRs into `main`, squash
   merge, linear history.
-- **CI must be green to merge.** No exceptions for maintainers.
+- **CI must be green to merge.** No exceptions for maintainers. Branch protection
+  requires the `all-checks` summary job to pass rather than listing every
+  individual job. This summary job depends on all other CI jobs and fails if any
+  dependency fails or is cancelled.
 - **Formatting:** `cargo fmt`. Lints: `cargo clippy`, warnings denied.
+
+### Dependency hygiene checks
+
+Two required CI jobs guard the dependency graph:
+
+- `unused-deps` runs `cargo machete`, a fast textual scan for dependencies no
+  source file references. Because it does not compile anything, code generated
+  by a macro or a build script can look unused. If you hit one of those, confirm
+  the crate really is used, then add its name to
+  `[workspace.metadata.cargo-machete].ignored` in the workspace `Cargo.toml`
+  with a comment explaining why. A genuinely unused dependency must be
+  removed, not ignored.
+- `cargo-deny` runs `cargo deny check licenses bans` against `deny.toml`,
+  enforcing the SPDX allow-list and reporting duplicate versions and
+  non-crates.io sources. Vulnerability advisories are owned by the separate
+  `cargo audit` job — never add an advisory to `deny.toml` just to turn a red
+  job green. Run `cargo deny check` locally for the full policy, which also
+  rejects yanked crate versions.
 
 ## Fuzzing
 
@@ -156,6 +204,13 @@ cargo +nightly fuzz run fuzz_mul_div
 
 Not run in CI (fuzzing is open-ended, not pass/fail); run it locally after
 touching `math.rs`.
+
+## Code of Conduct
+
+All participation in this project is governed by our
+[Code of Conduct](CODE_OF_CONDUCT.md). By contributing, you agree to abide by
+its terms. Reports of violations go to rubelu2017@gmail.com (see
+[SECURITY.md](SECURITY.md) for the same contact and reporting context).
 
 ## Security
 

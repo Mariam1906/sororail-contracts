@@ -17,6 +17,14 @@ soroban-sdk = "27.0.6"
 sororail-common = { path = "contracts/common", version = "0.1.0" }
 proptest = "1.5"
 
+# `cargo machete` is run in CI (issue #441). It is a textual scan, so a
+# dependency used only through a generated macro or a build script can be
+# reported as unused. Before ignoring such a finding, confirm it is genuinely
+# a false positive, then add the crate name here with a short reason comment —
+# never silence a real unused dependency. See CONTRIBUTING.md.
+[workspace.metadata.cargo-machete]
+ignored = []
+
 # Lint policy lives here, not in CI flags, so a plain `cargo clippy` locally
 # gives the same verdict as CI. Every member opts in with `[lints] workspace = true`.
 [workspace.lints.rust]

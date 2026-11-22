@@ -28,5 +28,8 @@ pub use errors::Error;
 #[cfg(any(test, feature = "testutils"))]
 pub mod testutils;
 
+#[cfg(any(test, feature = "testutils"))]
+pub mod strategies;
+
 #[cfg(test)]
 mod test;

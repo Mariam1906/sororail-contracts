@@ -1,0 +1,59 @@
+# Pre-commit configuration for SoroRail contracts (#446).
+#
+# Runs locally before each commit so contributors stop pushing diffs that
+# `cargo fmt --check` rejects on CI. On a warm cache the whole suite
+# finishes in well under 30 seconds (clippy against the workspace with
+# incremental on, fmt against the staged files only).
+#
+# Install once:
+#
+#   pip install pre-commit        # or `brew install pre-commit`
+#   pre-commit install
+#
+# Run manually:
+#
+#   pre-commit run --all-files
+
+repos:
+  # Universal hygiene hooks: trailing whitespace, final newline, mixed line
+  # endings. Fast, well below the 30s budget.
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: '\.(svg|wasm)$'
+      - id: end-of-file-fixer
+        exclude: '\.(svg|wasm)$'
+      - id: mixed-line-ending
+        args: [--fix=lf]
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: [--maxkb=512]
+
+  # Rust formatting + linting against the pinned toolchain.
+  # `cargo fmt --all --check` is intentionally used over `--all` so the hook
+  # never writes files behind the committer; a failing hook prints the diff
+  # and exits non-zero. `cargo clippy` runs with the same flags the CI
+  # workflow uses.
+  - repo: local
+    hooks:
+      - id: cargo-fmt-check
+        name: cargo fmt --all --check
+        entry: cargo fmt --all --check
+        language: system
+        types: [rust]
+        pass_filenames: false
+        description: >
+          Fails if any .rs file in the workspace is unformatted. Fix with
+          `cargo fmt --all`.
+
+      - id: cargo-clippy-check
+        name: cargo clippy -D warnings
+        entry: cargo clippy --workspace --all-targets --exclude sororail-integration-tests -- -D warnings
+        language: system
+        types: [rust]
+        pass_filenames: false
+        description: >
+          Fails on any new warning in the workspace. The integration crate
+          is excluded because it needs the test toolchain which already
+          runs in `make test`. Matches the lint policy in Cargo.toml.

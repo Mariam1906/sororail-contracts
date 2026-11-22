@@ -164,4 +164,8 @@ pub enum Error {
     // list, and paying one address twice in a batch is legitimate anyway, so
     // duplicate detection belongs in the client's CSV import. The number stays
     // burned rather than reused.
+    /// A recipient's address is a smart-contract address. Returned when the
+    /// caller sets `only_eoa = true` on `execute`, `execute_equal`,
+    /// `execute_many_tokens`, or `preview` and any recipient is a contract.
+    BatchRecipientIsContract = 103,
 }

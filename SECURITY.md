@@ -57,7 +57,33 @@ Out of scope: findings that require a compromised wallet or leaked key,
 issues in the Stellar network or `soroban-sdk` itself (report those upstream),
 and anything that depends on deploying to mainnet, which we ask you not to do.
 
+For per-contract trust assumptions, attacker capabilities, mitigations and
+residual risks, see [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md).
+
 ## Known limitations and design decisions
+
+### Supported token assumptions
+
+All five contracts interact with Stellar tokens through the [SEP-41 token interface](https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0041.md). They assume **well-behaved, standard tokens** and are **not** designed to handle the following token types:
+
+| Token type | Description | Why it is out of scope |
+| --- | --- | --- |
+| Fee-on-transfer | A portion of each `transfer` is deducted as a fee, so the recipient receives less than the amount specified. | `escrow`, `stream`, `vesting`, and `recurring` compute exact amounts to transfer. If a fee is silently deducted, the contract holds less than it believes, breaking the conservation invariant (`withdrawn + refunded + remaining == deposited`). |
+| Rebasing | The token's balance of a held address changes over time without any transfer. | A rebasing token that increases balances after a stream is funded gives the contract a surplus it has no mechanism to distribute. A rebasing token that decreases balances causes the contract to hold less than it owes, which can break payouts. |
+| Callback / re-entrant | The token calls back into the contract during a `transfer`. | Entry points persist state _before_ calling the token (see e.g. `escrow::fund`, `stream::cancel`) to defend against re-entry. A callback token that re-enters via a different entry point still observes a valid, persisted state, but multi-entry-point re-entry has not been exhaustively tested. Such tokens should be treated as untrusted. |
+
+**How these assumptions are defended in practice:**
+
+- `stream::create` and `vesting::create` pull the full deposit up front. If the amount that arrives in the contract differs from what was requested (fee-on-transfer), the stream or grant is misconfigured from the start, but the contracts have no mechanism to detect this at creation time.
+- `recurring` holds no funds and uses `transfer_from`; a fee-on-transfer token would cause the payee to receive less than `amount_per_period`, which is a semantic error but does not violate the pull invariant (`periods_charged * amount_per_period`), because that invariant tracks what was _requested_, not what was _received_.
+- State is always persisted before the token call (`storage::save` before `transfer`), so a re-entrant token observes the post-transition state rather than the pre-transition one. This is intentional and documented inline in `contract.rs` for each contract.
+
+**Relevant tests:**
+
+- Conservation invariants: `contracts/stream/src/test.rs` (`assert_conserved`), `contracts/vesting/src/test/conservation.rs`
+- Re-entry defense: `escrow` saves state before `transfer` in `fund`, `release`, `refund`, and `resolve`; `stream` saves before `pay`/`pull` in all mutating entry points.
+
+Integrators who need to support fee-on-transfer or rebasing tokens must wrap these contracts or handle the discrepancy off-chain.
 
 ### Escrow dispute timeout
 
@@ -75,6 +101,19 @@ would otherwise be locked permanently in the `Disputed` state. To mitigate this:
 Integrators relying on escrow should document this assumption: arbiters are
 trusted to respond within 7 days of the original deadline, or funds become
 recoverable by the depositor unilaterally.
+
+### Token authorization revocation
+
+A Stellar Asset Contract with `AUTH_REQUIRED` and `AUTH_REVOCABLE` can
+deauthorize a stream recipient mid-stream. The token transfer then fails and the
+host rolls back the stream state, so the failed `withdraw` changes no balances
+or accounting. Recovery is for the token admin to call
+`StellarAssetClient::set_authorized(recipient, true)`; the accrued amount remains
+withdrawable and the next `withdraw` succeeds. If authorization cannot be
+restored, the sender can `cancel` to settle accrued funds to the recipient and
+refund the rest. This path is tested in
+[contracts/stream/src/test.rs](contracts/stream/src/test.rs) and analysed in
+[docs/THREAT_MODEL.md](docs/THREAT_MODEL.md).
 
 ## Public disclosure and security advisories
 
@@ -128,6 +167,11 @@ go through normal review.
 
 Adding CoinFabrik's Scout, an open-source static analyzer built for Soroban,
 is tracked as follow-up work.
+
+Verifiable builds are documented in
+[docs/reproducible-builds.md](docs/reproducible-builds.md). CI builds the WASM
+twice in clean containers and compares SHA-256 hashes before a release is
+trusted.
 
 The Stellar bug bounty covers Soroban platform exploits; contract-level
 findings in this repository are ours, not theirs.
