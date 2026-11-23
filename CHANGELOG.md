@@ -12,6 +12,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `escrow::extend_deadline(new_deadline)` moves the deadline of a `Funded` escrow later. It requires authorization from both the depositor and the beneficiary, fails once the deadline has been reached, and emits `DeadlineExtended` with the old and new values (#377).
 - `escrow::time_to_deadline()` is a read-only view returning the seconds left until the deadline on the ledger clock, `0` once it has been reached (#378).
 - `escrow::resolve_timeout(caller)` refunds the depositor once the optional `dispute_timeout` has elapsed since `dispute`. Either party may call it. The arbiter's `resolve` remains available until then, so the first transaction to land decides the outcome (#379). The trade-off is documented in SECURITY.md.
+- `sororail_common::storage` single-position macro gains `try_load(env) -> Option<T>`,
+  a read-only single storage read that returns `None` when the value is absent.
+  It does not extend the TTL, like `load_view` (#374).
+- `sororail_common::testutils`: `TestEnv::advance_by(seconds)` (panics on `u64`
+  overflow), `TestEnv::advance_to_end_of(ts)` (panics if `ts` is in the past), and
+  `TestEnv::make_token_with_admin(supply)`, which returns the token client, the
+  admin client and the funder. The token is revocable so tests can deauthorize a
+  holder. `make_token` is unchanged (#372, #373).
+- CI and `make build` now build `sororail-common` alone for `wasm32v1-none`, so
+  a std-only dependency in `common` fails the build (#376).
 - Per-contract crate READMEs rendered through rustdoc, a per-contract threat
   model, `source_repo` contract metadata, and a regression test proving that a
   deauthorized recipient cannot corrupt a stream on a flagged Stellar Asset

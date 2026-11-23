@@ -166,7 +166,7 @@ mod conservation_properties {
             for op in ops {
                 match op {
                     Op::Advance(delta) => {
-                        te.advance_to(te.timestamp().saturating_add(delta));
+                        te.advance_by(delta);
                     }
                     Op::WithdrawAll => {
                         let _ = client.try_withdraw(&None);

@@ -32,7 +32,7 @@
 #![allow(clippy::arithmetic_side_effects)]
 
 use soroban_sdk::{
-    testutils::{Address as _, Ledger as _},
+    testutils::{Address as _, IssuerFlags, Ledger as _},
     token::{StellarAssetClient, TokenClient},
     Address, Env,
 };
@@ -95,6 +95,30 @@ impl TestEnv {
         (client, funder)
     }
 
+    /// Like [`Self::make_token`], but also returns the token's admin client.
+    ///
+    /// Returns `(TokenClient, StellarAssetClient, funder)`. The admin client can
+    /// mint, set authorization and claw back, none of which [`TokenClient`]
+    /// exposes. The token is registered as revocable, so a test can deauthorize
+    /// a holder with `admin.set_authorized(&holder, &false)`.
+    ///
+    /// [`Self::make_token`] is unchanged and still registers a non-revocable
+    /// token. Use this variant only when the test needs the admin.
+    pub fn make_token_with_admin(
+        &self,
+        initial_supply: i128,
+    ) -> (TokenClient<'_>, StellarAssetClient<'_>, Address) {
+        let issuer = Address::generate(&self.env);
+        let sac = self.env.register_stellar_asset_contract_v2(issuer);
+        sac.issuer().set_flag(IssuerFlags::RevocableFlag);
+        let token_address = sac.address();
+        let admin = StellarAssetClient::new(&self.env, &token_address);
+        let funder = Address::generate(&self.env);
+        admin.mint(&funder, &initial_supply);
+        let client = TokenClient::new(&self.env, &token_address);
+        (client, admin, funder)
+    }
+
     /// Mints `amount` tokens of `token` to `recipient`.
     ///
     /// Useful when a test needs a single token but multiple funded accounts.
@@ -105,6 +129,41 @@ impl TestEnv {
     /// Sets the ledger timestamp to `ts`.
     pub fn advance_to(&self, ts: u64) {
         self.env.ledger().with_mut(|l| l.timestamp = ts);
+    }
+
+    /// Advances the ledger timestamp by `delta` seconds.
+    ///
+    /// Prefer this over `advance_to(start + N)`: the test states the step, not
+    /// the absolute time, so it survives a change to the start time.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the new timestamp would overflow `u64`.
+    pub fn advance_by(&self, delta: u64) {
+        let ts = self
+            .timestamp()
+            .checked_add(delta)
+            .expect("advance_by: ledger timestamp would overflow u64");
+        self.advance_to(ts);
+    }
+
+    /// Advances the ledger to `ts`, the boundary at which a window ends.
+    ///
+    /// Use this where a test means "run the clock to the end of a schedule"
+    /// (for example a stream's `stop`), so the boundary is named rather than
+    /// hand-computed. The ledger is set to `ts` itself.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `ts` is earlier than the current ledger time. The clock only
+    /// moves forward through this helper.
+    pub fn advance_to_end_of(&self, ts: u64) {
+        let now = self.timestamp();
+        assert!(
+            ts >= now,
+            "advance_to_end_of: {ts} is before the current ledger time {now}"
+        );
+        self.advance_to(ts);
     }
 
     /// Returns the environment's ledger time.
@@ -474,6 +533,63 @@ pub fn deploy_fee_on_transfer_token(env: &Env, fee_bps: u32) -> (Address, Addres
         &String::from_str(env, "FEE"),
     );
     (contract_id, sink)
+}
+
+#[cfg(test)]
+mod helper_smoke {
+    use super::*;
+
+    #[test]
+    fn advance_by_moves_the_clock_forward_by_delta() {
+        let te = TestEnv::at(1_000);
+        te.advance_by(250);
+        assert_eq!(te.timestamp(), 1_250);
+    }
+
+    #[test]
+    #[should_panic(expected = "would overflow u64")]
+    fn advance_by_panics_instead_of_wrapping_past_u64_max() {
+        let te = TestEnv::at(u64::MAX - 1);
+        te.advance_by(2);
+    }
+
+    #[test]
+    fn advance_to_end_of_sets_the_clock_to_the_boundary() {
+        let te = TestEnv::at(1_000);
+        te.advance_to_end_of(5_000);
+        assert_eq!(te.timestamp(), 5_000);
+    }
+
+    #[test]
+    #[should_panic(expected = "before the current ledger time")]
+    fn advance_to_end_of_refuses_to_move_backwards() {
+        let te = TestEnv::at(5_000);
+        te.advance_to_end_of(1_000);
+    }
+
+    /// Issue #373: the admin can deauthorize a holder, the holder's transfer
+    /// is rejected, and restoring authorization lets it succeed again.
+    #[test]
+    fn make_token_with_admin_lets_the_admin_deauthorize_a_holder() {
+        let te = TestEnv::new();
+        let (token, admin, funder) = te.make_token_with_admin(1_000);
+        let other = te.make_address();
+
+        admin.set_authorized(&funder, &false);
+        assert!(
+            token.try_transfer(&funder, &other, &100).is_err(),
+            "a deauthorized holder must not be able to transfer"
+        );
+        assert_eq!(
+            token.balance(&funder),
+            1_000,
+            "a rejected transfer moves nothing"
+        );
+
+        admin.set_authorized(&funder, &true);
+        token.transfer(&funder, &other, &100);
+        assert_eq!(token.balance(&other), 100);
+    }
 }
 
 #[cfg(test)]
