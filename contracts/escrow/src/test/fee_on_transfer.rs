@@ -6,7 +6,10 @@
 //! contract, so a downstream test can reason about how much actually
 //! settles when a hostile token is on the other side of `transfer`.
 
-use soroban_sdk::{testutils::Address as _, Address, Env};
+use soroban_sdk::{
+    testutils::{Address as _, Ledger as _},
+    Address, Env,
+};
 use sororail_common::testutils::{deploy_fee_on_transfer_token, FeeOnTransferTokenClient};
 
 use crate::contract::{EscrowContract, EscrowContractClient};

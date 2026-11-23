@@ -14,9 +14,10 @@ fn measure_budget_for<F, T>(env: &Env, f: F) -> (u32, u32)
 where
     F: FnOnce() -> T,
 {
-    let before = env.budget();
+    // `Env::budget` is deprecated in soroban-sdk 27 and its readings were
+    // never used here, so this only runs the closure.
+    let _ = env;
     let _ = f();
-    let after = env.budget();
 
     // Extract CPU and memory instructions from budget if available
     // Note: Soroban SDK budget information is limited in tests,
@@ -87,13 +88,15 @@ fn budget_release() {
 fn budget_refund_after_deadline() {
     let f = Fixture::funded(true);
     f.advance_past_deadline();
+    // The fixture mints more than `AMOUNT`, so compare the change in balance.
+    let depositor_before = f.token.balance(&f.depositor);
 
     let (_cpu, _mem) = measure_budget_for(&f.env, || {
         let _ = f.client.try_refund(&f.depositor);
     });
 
     // All funds should be returned to depositor
-    assert_eq!(f.token.balance(&f.depositor), AMOUNT);
+    assert_eq!(f.token.balance(&f.depositor) - depositor_before, AMOUNT);
 }
 
 #[test]
@@ -111,6 +114,7 @@ fn budget_dispute() {
 fn budget_resolve_equal_split() {
     let f = Fixture::funded(true);
     f.client.dispute(&f.depositor);
+    let depositor_before = f.token.balance(&f.depositor);
 
     let (_cpu, _mem) = measure_budget_for(&f.env, || {
         let _ = f.client.try_resolve(&5_000);
@@ -119,13 +123,14 @@ fn budget_resolve_equal_split() {
     // Funds should be split 50-50
     let half = AMOUNT / 2;
     assert_eq!(f.token.balance(&f.beneficiary), half);
-    assert_eq!(f.token.balance(&f.depositor), half);
+    assert_eq!(f.token.balance(&f.depositor) - depositor_before, half);
 }
 
 #[test]
 fn budget_resolve_full_win_beneficiary() {
     let f = Fixture::funded(true);
     f.client.dispute(&f.depositor);
+    let depositor_before = f.token.balance(&f.depositor);
 
     let (_cpu, _mem) = measure_budget_for(&f.env, || {
         let _ = f.client.try_resolve(&10_000);
@@ -133,20 +138,21 @@ fn budget_resolve_full_win_beneficiary() {
 
     // All funds to beneficiary
     assert_eq!(f.token.balance(&f.beneficiary), AMOUNT);
-    assert_eq!(f.token.balance(&f.depositor), 0);
+    assert_eq!(f.token.balance(&f.depositor), depositor_before);
 }
 
 #[test]
 fn budget_resolve_full_win_depositor() {
     let f = Fixture::funded(true);
     f.client.dispute(&f.depositor);
+    let depositor_before = f.token.balance(&f.depositor);
 
     let (_cpu, _mem) = measure_budget_for(&f.env, || {
         let _ = f.client.try_resolve(&0);
     });
 
     // All funds to depositor
-    assert_eq!(f.token.balance(&f.depositor), AMOUNT);
+    assert_eq!(f.token.balance(&f.depositor) - depositor_before, AMOUNT);
     assert_eq!(f.token.balance(&f.beneficiary), 0);
 }
 

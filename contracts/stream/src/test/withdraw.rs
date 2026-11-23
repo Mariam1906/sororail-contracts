@@ -242,3 +242,185 @@ fn withdraw_requires_the_recipients_authorization() {
     te.advance_by(100);
     c.withdraw(&None);
 }
+
+// ------------------------------------------------------------- withdraw_to
+
+/// Calls `withdraw_to` authorized only by `who`, returning the host result.
+fn try_withdraw_to_as(
+    f: &Fixture,
+    who: &Address,
+    destination: &Address,
+    amount: Option<i128>,
+) -> Result<Result<i128, soroban_sdk::Error>, Result<soroban_sdk::Error, soroban_sdk::InvokeError>>
+{
+    f.env.mock_auths(&[MockAuth {
+        address: who,
+        invoke: &MockAuthInvoke {
+            contract: &f.client.address,
+            fn_name: "withdraw_to",
+            args: (destination.clone(), amount).into_val(&f.env),
+            sub_invokes: &[],
+        },
+    }]);
+    f.env.try_invoke_contract::<i128, soroban_sdk::Error>(
+        &f.client.address,
+        &Symbol::new(&f.env, "withdraw_to"),
+        vec![
+            &f.env,
+            destination.into_val(&f.env),
+            amount.into_val(&f.env),
+        ],
+    )
+}
+
+/// `withdraw_to` and `withdraw` share accrual and accounting: the same call at
+/// the same time leaves both streams in identical states, and only the payee
+/// differs (#391).
+#[test]
+fn withdraw_to_accounts_exactly_like_withdraw_but_pays_the_destination() {
+    for amount in [Some(RATE * 120), None] {
+        let plain = Fixture::new(true);
+        let routed = Fixture::new(true);
+        let treasury = Address::generate(&routed.env);
+        plain.at(START + 300);
+        routed.at(START + 300);
+
+        let paid_plain = plain.client.withdraw(&amount);
+        let paid_routed = routed.client.withdraw_to(&treasury, &amount);
+
+        assert_eq!(paid_routed, paid_plain, "{amount:?}");
+        let (a, b) = (plain.client.get(), routed.client.get());
+        assert_eq!(b.withdrawn, a.withdrawn);
+        assert_eq!(b.refunded, a.refunded);
+        assert_eq!(b.deposited, a.deposited);
+        assert_eq!(routed.client.remaining(), plain.client.remaining());
+        assert_eq!(
+            routed.client.balance_of(&routed.recipient),
+            plain.client.balance_of(&plain.recipient)
+        );
+        assert_eq!(routed.held(), plain.held());
+
+        // Only the payee differs.
+        assert_eq!(routed.token.balance(&treasury), paid_routed);
+        assert_eq!(routed.token.balance(&routed.recipient), 0);
+        assert_eq!(plain.token.balance(&plain.recipient), paid_plain);
+        plain.assert_conserved();
+        routed.assert_conserved();
+    }
+}
+
+#[test]
+fn withdraw_to_the_recipient_itself_matches_withdraw() {
+    let f = Fixture::new(true);
+    f.at(START + 300);
+    assert_eq!(f.client.withdraw_to(&f.recipient, &None), RATE * 300);
+    assert_eq!(f.token.balance(&f.recipient), RATE * 300);
+    f.assert_conserved();
+}
+
+#[test]
+fn withdraw_to_spreads_across_calls_and_destinations() {
+    let f = Fixture::new(true);
+    let treasury = Address::generate(&f.env);
+    f.at(START + 300);
+    f.client.withdraw_to(&treasury, &Some(RATE * 100));
+    f.client.withdraw(&Some(RATE * 50));
+    f.at(STOP);
+    f.client.withdraw_to(&f.outsider, &None);
+
+    assert_eq!(f.token.balance(&treasury), RATE * 100);
+    assert_eq!(f.token.balance(&f.recipient), RATE * 50);
+    assert_eq!(f.token.balance(&f.outsider), DEPOSITED - RATE * 150);
+    assert_eq!(f.client.get().withdrawn, DEPOSITED);
+    assert_eq!(f.client.remaining(), 0);
+    f.assert_conserved();
+}
+
+/// The same validation as `withdraw`, with no state change or transfer on
+/// rejection.
+#[test]
+fn withdraw_to_rejects_what_withdraw_rejects() {
+    let f = Fixture::new(true);
+    let treasury = Address::generate(&f.env);
+
+    // Nothing accrued yet at `start`.
+    assert_eq!(
+        f.client.try_withdraw_to(&treasury, &None),
+        Err(Ok(Error::InvalidAmount))
+    );
+    f.at(START + 300);
+    let before = f.client.get();
+    for (amount, error) in [
+        (Some(RATE * 300 + 1), Error::StreamInsufficientAccrued),
+        (Some(0), Error::InvalidAmount),
+        (Some(-1), Error::InvalidAmount),
+    ] {
+        assert_eq!(
+            f.client.try_withdraw_to(&treasury, &amount),
+            Err(Ok(error)),
+            "{amount:?}"
+        );
+        assert_eq!(
+            f.client.try_withdraw(&amount),
+            Err(Ok(error)),
+            "withdraw must agree for {amount:?}"
+        );
+    }
+    assert_eq!(f.client.get(), before);
+    assert_eq!(f.token.balance(&treasury), 0);
+    f.assert_conserved();
+}
+
+#[test]
+fn withdraw_to_rejects_paying_the_stream_contract_itself() {
+    let f = Fixture::new(true);
+    f.at(START + 300);
+    let before = f.client.get();
+    assert_eq!(
+        f.client.try_withdraw_to(&f.client.address, &None),
+        Err(Ok(Error::IdenticalParties))
+    );
+    assert_eq!(f.client.get(), before);
+    f.assert_conserved();
+}
+
+#[test]
+fn withdraw_to_after_cancel_has_nothing_to_pay() {
+    let f = Fixture::new(true);
+    f.at(START + 300);
+    f.client.cancel();
+    assert_eq!(
+        f.client.try_withdraw_to(&f.outsider, &None),
+        Err(Ok(Error::InvalidAmount))
+    );
+    f.assert_conserved();
+}
+
+/// Only the recipient can route its accrued funds: neither the destination
+/// nor the sender may authorize a payout to themselves.
+#[test]
+fn withdraw_to_requires_the_recipients_authorization() {
+    let f = Fixture::new(true);
+    f.at(START + 300);
+    let treasury = Address::generate(&f.env);
+
+    for impostor in [&treasury, &f.sender, &f.outsider] {
+        assert_eq!(
+            try_withdraw_to_as(&f, impostor, &treasury, None),
+            Err(Ok(soroban_sdk::Error::from_type_and_code(
+                ScErrorType::Context,
+                ScErrorCode::InvalidAction,
+            ))),
+        );
+    }
+    assert_eq!(f.client.get().withdrawn, 0);
+    assert_eq!(f.token.balance(&treasury), 0);
+
+    // The recipient's own authorization is enough.
+    assert_eq!(
+        try_withdraw_to_as(&f, &f.recipient, &treasury, None),
+        Ok(Ok(RATE * 300))
+    );
+    assert_eq!(f.token.balance(&treasury), RATE * 300);
+    f.assert_conserved();
+}

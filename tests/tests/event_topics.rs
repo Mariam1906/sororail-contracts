@@ -252,10 +252,15 @@ fn every_public_event_has_a_pinned_topic_name() {
         ("stream", "Cancelled", "cancelled"),
         ("stream", "Created", "created"),
         ("stream", "Extended", "extended"),
+        ("stream", "RecipientTransferred", "recipient_transferred"),
         ("stream", "ToppedUp", "topped_up"),
         ("stream", "ToppedUpFrom", "topped_up_from"),
         ("stream", "Withdrawn", "withdrawn"),
-        ("vesting", "BeneficiaryTransferred", "beneficiary_transferred"),
+        (
+            "vesting",
+            "BeneficiaryTransferred",
+            "beneficiary_transferred",
+        ),
         ("vesting", "Claimed", "claimed"),
         ("vesting", "Created", "created"),
         ("vesting", "Revoked", "revoked"),
@@ -389,4 +394,41 @@ fn stream_created_payload_lays_out_the_economics() {
         ],
         "stream::Created data layout changed; update docs/events.md and indexers"
     );
+}
+
+#[test]
+fn stream_withdrawn_payload_names_the_destination() {
+    // #391: `withdraw_to` pays an address other than the recipient, so the
+    // `Withdrawn` payload carries the `destination` while the recipient stays
+    // the indexed topic. Pin the field names, order and types.
+    let source = fs::read_to_string(workspace_root().join("contracts/stream/src/events.rs"))
+        .expect("stream events.rs is readable");
+    let body = source
+        .split("pub struct Withdrawn {")
+        .nth(1)
+        .and_then(|rest| rest.split('}').next())
+        .expect("stream::Withdrawn is declared");
+    let lines: Vec<&str> = body.lines().map(str::trim).collect();
+    let fields: Vec<&str> = lines
+        .iter()
+        .copied()
+        .filter(|line| line.starts_with("pub "))
+        .collect();
+    assert_eq!(
+        fields,
+        [
+            "pub recipient: Address,",
+            "pub amount: i128,",
+            "pub total_withdrawn: i128,",
+            "pub destination: Address,",
+        ],
+        "stream::Withdrawn data layout changed; update docs/events.md and indexers"
+    );
+    // Only the recipient is a topic; the destination is data.
+    let topic_fields: Vec<&str> = lines
+        .windows(2)
+        .filter(|pair| pair[0] == "#[topic]")
+        .map(|pair| pair[1])
+        .collect();
+    assert_eq!(topic_fields, ["pub recipient: Address,"]);
 }

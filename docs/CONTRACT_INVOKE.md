@@ -19,6 +19,8 @@ CLI identity and prompts it to sign.
 ```bash
 stellar contract invoke --network "$NETWORK" --source-account sender --id "$STREAM_ID" -- create --sender "$SENDER" --recipient "$RECIPIENT" --token "$TOKEN_ID" --rate_per_second 100 --start 1760000000 --stop 1760003600 --cancellable true
 stellar contract invoke --network "$NETWORK" --source-account recipient --id "$STREAM_ID" -- withdraw --amount 100
+# Same withdrawal, paid straight to another address (treasury, exchange deposit):
+stellar contract invoke --network "$NETWORK" --source-account recipient --id "$STREAM_ID" -- withdraw_to --destination "$TREASURY" --amount 100
 stellar contract invoke --network "$NETWORK" --id "$STREAM_ID" -- bump
 ```
 

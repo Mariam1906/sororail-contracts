@@ -89,6 +89,9 @@ macro_rules! impl_single_position_storage {
         /// One storage read, so code that wants an `Option` does not pay for
         /// `is_initialized` plus a load. Like `load_view` it does not extend the
         /// TTL; a mutating path should use `load`.
+        // Optional accessor: a contract that never needs it must still build
+        // under the workspace's `warnings = "deny"`.
+        #[allow(dead_code)]
         pub fn try_load(env: &::soroban_sdk::Env) -> Option<$type> {
             env.storage().instance().get(&$key)
         }

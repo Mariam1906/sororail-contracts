@@ -84,6 +84,8 @@ impl EscrowContract {
             deadline,
             dispute_timeout,
             disputed_at: None,
+            created_at: env.ledger().timestamp(),
+            funded_at: None,
             state: State::Created,
         };
         storage::save(&env, &escrow);
@@ -133,12 +135,14 @@ impl EscrowContract {
             return Err(Error::EscrowClosed);
         }
         auth::require(escrow.state == State::Created, Error::EscrowNotFundable)?;
-        if env.ledger().timestamp() >= escrow.deadline {
+        let now = env.ledger().timestamp();
+        if now >= escrow.deadline {
             return Err(Error::DeadlinePassed);
         }
         escrow.depositor.require_auth();
 
         escrow.state = State::Funded;
+        escrow.funded_at = Some(now);
         storage::save(&env, &escrow);
 
         token::TokenClient::new(&env, &escrow.token).transfer(
@@ -273,7 +277,9 @@ impl EscrowContract {
     pub fn resolve_timeout(env: Env, caller: Address) -> Result<(), Error> {
         let mut escrow = storage::load(&env)?;
         auth::require(escrow.state == State::Disputed, Error::EscrowNotDisputed)?;
-        let timeout = escrow.dispute_timeout.ok_or(Error::EscrowNoDisputeTimeout)?;
+        let timeout = escrow
+            .dispute_timeout
+            .ok_or(Error::EscrowNoDisputeTimeout)?;
         // `dispute` always sets `disputed_at`, so this is defense-in-depth,
         // in the same spirit as the `arbiter` check in `resolve`.
         let disputed_at = escrow.disputed_at.ok_or(Error::EscrowNotDisputed)?;
@@ -310,7 +316,10 @@ impl EscrowContract {
     pub fn extend_deadline(env: Env, new_deadline: u64) -> Result<(), Error> {
         let mut escrow = storage::load(&env)?;
         Self::require_funded(&escrow)?;
-        auth::require(env.ledger().timestamp() < escrow.deadline, Error::DeadlinePassed)?;
+        auth::require(
+            env.ledger().timestamp() < escrow.deadline,
+            Error::DeadlinePassed,
+        )?;
         auth::require(new_deadline > escrow.deadline, Error::InvalidTimeRange)?;
         // Both parties are fixed, so no membership check is needed. Each
         // signature is requested in turn, depositor first.

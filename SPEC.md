@@ -140,7 +140,8 @@ Note on events: the original spec called for shared event-emission helpers here.
 Funds held by the contract, released on a condition.
 
 - `init(depositor, beneficiary, arbiter: Option<Address>, token, amount, deadline, dispute_timeout: Option<u64>)`
-- `fund()` — pulls tokens from depositor
+- `fund()` — pulls tokens from depositor and records `funded_at`
+- `get()` — the `Escrow` record. Timestamps: `created_at: u64` (set by `init`), `funded_at: Option<u64>` (set by `fund`), `disputed_at: Option<u64>` (set by `dispute`); none changes once set.
 - `extend_deadline(new_deadline)` — moves the deadline of a `Funded` escrow later. Requires auth from both depositor and beneficiary. Fails with `DeadlinePassed` at or after the current deadline and with `InvalidTimeRange` unless `new_deadline` is strictly later. Emits `DeadlineExtended`.
 - `time_to_deadline()` — read-only view: seconds until `deadline` on the ledger clock, `0` once reached.
 - `resolve_timeout(caller)` — callable by depositor or beneficiary once `dispute_timeout` has elapsed since `dispute`; refunds the depositor. Requires a configured timeout (`EscrowNoDisputeTimeout`) and fails with `EscrowDisputeTimeoutNotReached` before it elapses. The arbiter's `resolve` stays callable until this runs.
@@ -159,6 +160,7 @@ Continuous per-second transfer from sender to recipient.
 
 - `create(sender, recipient, token, rate_per_second, start, stop, cancellable: bool)` — positional arguments on purpose, not a `CreateStreamParams` struct: Soroban allows a `#[contracttype]` params object (and that would clear `clippy::too_many_arguments`), but a flat ABI matches the SDK's uniform method shape without a nested params type per entry point. Same decision applies to `vesting::create`.
 - `withdraw(amount: Option<i128>)` — recipient claims accrued balance; `None` claims all available
+- `withdraw_to(destination, amount: Option<i128>)` — recipient-authorized withdrawal paid to `destination` instead of the recipient. Shares validation, accrual and accounting with `withdraw`. `destination` equal to the stream contract is rejected with `IdenticalParties`. `Withdrawn` carries the `destination`.
 - `cancel()` — settles accrued amount to recipient, returns remainder to sender; only if `cancellable`
 - `balance_of(who)` — view; accrued but unwithdrawn
 - `top_up(amount)` / `extend(new_stop)`

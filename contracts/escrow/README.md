@@ -23,8 +23,8 @@ Illegal transitions return typed errors; they never panic.
 
 | Entry point | Caller | Effect |
 | --- | --- | --- |
-| `init` | depositor | Records the agreement. Requires depositor auth. Takes an optional `dispute_timeout`. |
-| `fund` | depositor | Pulls `amount` of the token into the contract. |
+| `init` | depositor | Records the agreement and its `created_at` ledger timestamp. Requires depositor auth. Takes an optional `dispute_timeout`. |
+| `fund` | depositor | Pulls `amount` of the token into the contract. Records `funded_at`. |
 | `cancel` | depositor | Backs out of a `Created` escrow before funding. |
 | `release` | depositor or arbiter | Pays the beneficiary. |
 | `refund` | depositor (after deadline) or arbiter | Returns funds to the depositor. |
@@ -34,6 +34,12 @@ Illegal transitions return typed errors; they never panic.
 | `extend_deadline` | depositor and beneficiary (both sign) | Moves the deadline of a funded escrow later, before it is reached. Emits `DeadlineExtended`. |
 | `time_to_deadline` | anyone | Seconds until the deadline by the ledger clock; `0` once reached. |
 | `state`, `get`, `bump` | anyone | Reads the lifecycle state or agreement; extends TTL. |
+
+`get` returns the full `Escrow` record. Besides the agreement terms and
+`state`, it carries three ledger timestamps so indexers and UIs need not scan
+events: `created_at` (set by `init`), `funded_at` (`None` until `fund`, and
+for an escrow cancelled before funding) and `disputed_at` (`None` until
+`dispute`). Once set, none of them changes, including after a terminal state.
 
 `dispute_timeout` is optional and needs an arbiter. `Some(0)` is rejected. See
 [SECURITY.md](../../SECURITY.md#optional-per-escrow-dispute-timeout) for the

@@ -134,3 +134,58 @@ fn fund_requires_the_depositors_authorization() {
     f.env.set_auths(&[]);
     f.client.fund();
 }
+
+/// `created_at` is fixed by `init`, `funded_at` by `fund`, and neither moves
+/// through any later transition (#380).
+#[test]
+fn created_and_funded_timestamps_are_recorded_across_the_lifecycle() {
+    const FUNDED_TS: u64 = START_TS + 500;
+
+    // Created -> Funded -> Disputed -> Resolved.
+    let f = Fixture::new(true);
+    let created = f.client.get();
+    assert_eq!(created.created_at, START_TS);
+    assert_eq!(created.funded_at, None);
+
+    f.env.ledger().with_mut(|l| l.timestamp = FUNDED_TS);
+    f.client.fund();
+    let funded = f.client.get();
+    assert_eq!(funded.created_at, START_TS);
+    assert_eq!(funded.funded_at, Some(FUNDED_TS));
+
+    f.env.ledger().with_mut(|l| l.timestamp = FUNDED_TS + 100);
+    f.client.dispute(&f.beneficiary);
+    f.client.resolve(&5_000);
+    let resolved = f.client.get();
+    assert_eq!(resolved.state, State::Resolved);
+    assert_eq!(resolved.created_at, START_TS);
+    assert_eq!(resolved.funded_at, Some(FUNDED_TS));
+    assert_eq!(resolved.disputed_at, Some(FUNDED_TS + 100));
+
+    // Created -> Funded -> Released and Funded -> Refunded keep both values.
+    let r = Fixture::funded(true);
+    r.client.release(&r.depositor);
+    assert_eq!(r.client.get().created_at, START_TS);
+    assert_eq!(r.client.get().funded_at, Some(START_TS));
+
+    let d = Fixture::funded(true);
+    d.advance_past_deadline();
+    d.client.refund(&d.depositor);
+    assert_eq!(d.client.get().state, State::Refunded);
+    assert_eq!(d.client.get().funded_at, Some(START_TS));
+
+    // Created -> cancelled before funding: never funded.
+    let c = Fixture::new(true);
+    c.client.cancel();
+    assert_eq!(c.client.get().created_at, START_TS);
+    assert_eq!(c.client.get().funded_at, None);
+}
+
+/// A `fund` that reverts must not leave a `funded_at` behind.
+#[test]
+fn failed_fund_does_not_record_funded_at() {
+    let f = Fixture::new(true);
+    f.advance_past_deadline();
+    assert_eq!(f.client.try_fund(), Err(Ok(Error::DeadlinePassed)));
+    assert_eq!(f.client.get().funded_at, None);
+}

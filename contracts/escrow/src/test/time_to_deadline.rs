@@ -34,5 +34,8 @@ fn time_to_deadline_follows_an_extension() {
 fn time_to_deadline_requires_init() {
     let env = TestEnv::new().env().clone();
     let client = EscrowContractClient::new(&env, &env.register(EscrowContract, ()));
-    assert_eq!(client.try_time_to_deadline(), Err(Ok(Error::NotInitialized)));
+    assert_eq!(
+        client.try_time_to_deadline(),
+        Err(Ok(Error::NotInitialized))
+    );
 }

@@ -1,4 +1,4 @@
-use soroban_sdk::{contract, contractimpl, token, Address, BytesN, Env, Vec};
+use soroban_sdk::{contract, contractimpl, token, xdr::ToXdr, Address, BytesN, Env, Vec};
 use sororail_common::{math, Error};
 
 use crate::{
@@ -436,6 +436,6 @@ impl BatchPayoutContract {
 /// `ScAddress` is XDR-encoded as a 4-byte big-endian discriminant followed by
 /// the address payload. Discriminant 0 = Stellar account, 1 = contract.
 fn is_contract_addr(env: &Env, addr: &Address) -> bool {
-    let xdr = env.to_xdr(addr.clone());
+    let xdr = addr.clone().to_xdr(env);
     xdr.get(3).map_or(false, |b| b == 1)
 }
