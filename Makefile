@@ -11,6 +11,7 @@ all: build test
 build:
 	cargo build --workspace --exclude sororail-integration-tests \
 		--target $(WASM_TARGET) --release
+	cargo build -p sororail-common --target $(WASM_TARGET) --release
 
 # Tests run on the host, not on wasm -- soroban_sdk::testutils needs std.
 test:
