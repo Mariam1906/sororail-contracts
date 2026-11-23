@@ -81,3 +81,16 @@ pub struct Cancelled {
     #[topic]
     pub depositor: Address,
 }
+
+/// The depositor and beneficiary agreed to move a funded escrow's deadline later.
+#[contractevent(topics = ["escrow", "deadline_extended"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DeadlineExtended {
+    #[topic]
+    pub depositor: Address,
+    pub beneficiary: Address,
+    /// The deadline before the extension.
+    pub old_deadline: u64,
+    /// The deadline after the extension. Always strictly later than `old_deadline`.
+    pub new_deadline: u64,
+}

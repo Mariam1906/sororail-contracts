@@ -32,6 +32,14 @@ impl EscrowContract {
     /// Choose `Some(arbiter)` whenever the parties may need a neutral split.
     /// An arbiter must be distinct from both depositor and beneficiary.
     /// `None` is only safe when the depositor is trusted to release or refund.
+    ///
+    /// `dispute_timeout` is optional and requires an arbiter. When `Some(s)`,
+    /// either party may call `resolve_timeout` once `s` seconds have passed
+    /// since the dispute was raised, which refunds the depositor if the
+    /// arbiter has not acted. `Some(0)` is rejected with
+    /// [`Error::InvalidDuration`], and `Some(_)` without an arbiter with
+    /// [`Error::EscrowNoArbiter`]. `None` keeps the arbiter as the only way
+    /// out of a dispute (apart from the grace-period refund in `refund`).
     pub fn init(
         env: Env,
         depositor: Address,
@@ -40,6 +48,7 @@ impl EscrowContract {
         token: Address,
         amount: i128,
         deadline: u64,
+        dispute_timeout: Option<u64>,
     ) -> Result<(), Error> {
         if storage::is_initialized(&env) {
             return Err(Error::AlreadyInitialized);
@@ -56,6 +65,14 @@ impl EscrowContract {
                 return Err(Error::EscrowArbiterNotNeutral);
             }
         }
+        if dispute_timeout == Some(0) {
+            return Err(Error::InvalidDuration);
+        }
+        // A timeout only ever applies to a dispute, and a dispute needs an
+        // arbiter, so a timeout without one could never take effect.
+        if dispute_timeout.is_some() && arbiter.is_none() {
+            return Err(Error::EscrowNoArbiter);
+        }
         depositor.require_auth();
 
         let escrow = Escrow {
@@ -65,6 +82,8 @@ impl EscrowContract {
             token: token.clone(),
             amount,
             deadline,
+            dispute_timeout,
+            disputed_at: None,
             state: State::Created,
         };
         storage::save(&env, &escrow);
@@ -232,9 +251,92 @@ impl EscrowContract {
         auth::require_auth_either(&caller, &escrow.depositor, &escrow.beneficiary)?;
 
         escrow.state = State::Disputed;
+        escrow.disputed_at = Some(env.ledger().timestamp());
         storage::save(&env, &escrow);
         events::Disputed { raised_by: caller }.publish(&env);
         Ok(())
+    }
+
+    /// Refunds the depositor once an unresolved dispute has outlived the
+    /// `dispute_timeout` set in `init`. Callable by either party.
+    ///
+    /// The arbiter keeps the power to `resolve` until this runs. Both paths
+    /// require `Disputed`, and each moves the escrow to a terminal state, so
+    /// whichever transaction lands first decides the outcome. An arbiter who
+    /// resolves at `disputed_at + dispute_timeout - 1` therefore wins, and a
+    /// timeout call at the same moment fails with `EscrowNotDisputed`.
+    ///
+    /// Fails with [`Error::EscrowNoDisputeTimeout`] when `init` configured no
+    /// timeout, and with [`Error::EscrowDisputeTimeoutNotReached`] before the
+    /// timeout has elapsed. The boundary is inclusive: the call succeeds at
+    /// exactly `disputed_at + dispute_timeout`.
+    pub fn resolve_timeout(env: Env, caller: Address) -> Result<(), Error> {
+        let mut escrow = storage::load(&env)?;
+        auth::require(escrow.state == State::Disputed, Error::EscrowNotDisputed)?;
+        let timeout = escrow.dispute_timeout.ok_or(Error::EscrowNoDisputeTimeout)?;
+        // `dispute` always sets `disputed_at`, so this is defense-in-depth,
+        // in the same spirit as the `arbiter` check in `resolve`.
+        let disputed_at = escrow.disputed_at.ok_or(Error::EscrowNotDisputed)?;
+        auth::require_auth_either(&caller, &escrow.depositor, &escrow.beneficiary)?;
+
+        let unlocks_at = disputed_at.saturating_add(timeout);
+        auth::require(
+            env.ledger().timestamp() >= unlocks_at,
+            Error::EscrowDisputeTimeoutNotReached,
+        )?;
+
+        escrow.state = State::Refunded;
+        storage::save(&env, &escrow);
+
+        Self::pay(&env, &escrow, &escrow.depositor, escrow.amount);
+        events::Refunded {
+            depositor: escrow.depositor.clone(),
+            amount: escrow.amount,
+            refunded_by: caller,
+        }
+        .publish(&env);
+        Ok(())
+    }
+
+    /// Moves the deadline of a funded escrow later. Requires agreement from
+    /// both the depositor and the beneficiary.
+    ///
+    /// Allowed only while `Funded` and strictly before the current deadline.
+    /// At or after the deadline, the depositor already holds the refund right,
+    /// so the call fails with [`Error::DeadlinePassed`]. A `new_deadline` that
+    /// is not strictly later than the current one fails with
+    /// [`Error::InvalidTimeRange`]. Emits `DeadlineExtended` with the old and
+    /// new values.
+    pub fn extend_deadline(env: Env, new_deadline: u64) -> Result<(), Error> {
+        let mut escrow = storage::load(&env)?;
+        Self::require_funded(&escrow)?;
+        auth::require(env.ledger().timestamp() < escrow.deadline, Error::DeadlinePassed)?;
+        auth::require(new_deadline > escrow.deadline, Error::InvalidTimeRange)?;
+        // Both parties are fixed, so no membership check is needed. Each
+        // signature is requested in turn, depositor first.
+        escrow.depositor.require_auth();
+        escrow.beneficiary.require_auth();
+
+        let old_deadline = escrow.deadline;
+        escrow.deadline = new_deadline;
+        storage::save(&env, &escrow);
+
+        events::DeadlineExtended {
+            depositor: escrow.depositor.clone(),
+            beneficiary: escrow.beneficiary.clone(),
+            old_deadline,
+            new_deadline,
+        }
+        .publish(&env);
+        Ok(())
+    }
+
+    /// Seconds remaining until `deadline`, by the ledger clock. Returns `0`
+    /// once the deadline has been reached. Read-only, so it does not extend
+    /// the TTL.
+    pub fn time_to_deadline(env: Env) -> Result<u64, Error> {
+        let escrow = storage::load_view(&env)?;
+        Ok(escrow.deadline.saturating_sub(env.ledger().timestamp()))
     }
 
     /// Splits the funds between the parties. Arbiter only.

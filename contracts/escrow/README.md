@@ -23,14 +23,21 @@ Illegal transitions return typed errors; they never panic.
 
 | Entry point | Caller | Effect |
 | --- | --- | --- |
-| `init` | depositor | Records the agreement. Requires depositor auth. |
+| `init` | depositor | Records the agreement. Requires depositor auth. Takes an optional `dispute_timeout`. |
 | `fund` | depositor | Pulls `amount` of the token into the contract. |
 | `cancel` | depositor | Backs out of a `Created` escrow before funding. |
 | `release` | depositor or arbiter | Pays the beneficiary. |
 | `refund` | depositor (after deadline) or arbiter | Returns funds to the depositor. |
-| `dispute` | depositor or beneficiary | Freezes a funded escrow. Needs an arbiter. |
+| `dispute` | depositor or beneficiary | Freezes a funded escrow. Needs an arbiter. Records `disputed_at`. |
 | `resolve` | arbiter | Splits funds per `split_bps`. Only from `Disputed`. |
+| `resolve_timeout` | depositor or beneficiary | Refunds the depositor once `dispute_timeout` has passed since `dispute`. Only from `Disputed`. |
+| `extend_deadline` | depositor and beneficiary (both sign) | Moves the deadline of a funded escrow later, before it is reached. Emits `DeadlineExtended`. |
+| `time_to_deadline` | anyone | Seconds until the deadline by the ledger clock; `0` once reached. |
 | `state`, `get`, `bump` | anyone | Reads the lifecycle state or agreement; extends TTL. |
+
+`dispute_timeout` is optional and needs an arbiter. `Some(0)` is rejected. See
+[SECURITY.md](../../SECURITY.md#optional-per-escrow-dispute-timeout) for the
+trust trade-off.
 
 After the deadline plus a seven-day grace period, anyone may call `refund` on a
 still-disputed escrow so an unresponsive arbiter cannot lock funds forever.
@@ -40,7 +47,7 @@ See [SECURITY.md](../../SECURITY.md) for the rationale.
 
 ```text
 1. client.init(&depositor, &beneficiary, &Some(arbiter), &token, &amount,
-               &deadline)
+               &deadline, &Some(dispute_timeout))
 2. client.fund() -> the contract pulls the amount from the depositor.
 3. Happy path: client.release(&depositor) pays the beneficiary.
    Alternative: client.dispute(&beneficiary) freezes the funds, then
@@ -79,3 +86,7 @@ Failures use the shared `Error` enum in
 | `EscrowAlreadyDisputed` | `dispute` when already disputed |
 | `EscrowNotCancellable` | `cancel` when not in `Created` |
 | `EscrowArbiterNotNeutral` | `init` when the arbiter is either escrow party |
+| `EscrowNoDisputeTimeout` | `resolve_timeout` when `init` set no `dispute_timeout` |
+| `EscrowDisputeTimeoutNotReached` | `resolve_timeout` before `disputed_at + dispute_timeout` |
+| `InvalidDuration` | `init` with `dispute_timeout = Some(0)` |
+| `DeadlinePassed` | `extend_deadline` at or after the current deadline |

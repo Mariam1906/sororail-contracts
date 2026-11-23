@@ -34,14 +34,22 @@ stellar contract invoke --network "$NETWORK" --id "$VESTING_ID" -- bump
 ## Escrow
 
 ```bash
-stellar contract invoke --network "$NETWORK" --source-account funder --id "$ESCROW_ID" -- init --depositor "$FUNDER" --beneficiary "$BENEFICIARY" --arbiter "$ARBITER" --token "$TOKEN_ID" --amount 500000 --deadline 1760600000
+stellar contract invoke --network "$NETWORK" --source-account funder --id "$ESCROW_ID" -- init --depositor "$FUNDER" --beneficiary "$BENEFICIARY" --arbiter "$ARBITER" --token "$TOKEN_ID" --amount 500000 --deadline 1760600000 --dispute_timeout null
 stellar contract invoke --network "$NETWORK" --source-account funder --id "$ESCROW_ID" -- fund
 stellar contract invoke --network "$NETWORK" --source-account funder --id "$ESCROW_ID" -- release --caller "$FUNDER"
+stellar contract invoke --network "$NETWORK" --id "$ESCROW_ID" -- time_to_deadline
 stellar contract invoke --network "$NETWORK" --id "$ESCROW_ID" -- bump
 ```
 
 Use `--arbiter null` for an escrow without an arbiter. `resolve` is only valid
 after `dispute` and is signed by the stored arbiter.
+
+`--dispute_timeout` takes seconds and requires an arbiter. Once that long has
+passed since `dispute`, either party can refund the depositor with
+`resolve_timeout --caller <address>`. Use `null` to disable this path.
+
+`extend_deadline --new_deadline <ts>` moves a funded escrow's deadline later. It
+needs the authorization of both the depositor and the beneficiary.
 
 ## Recurring
 

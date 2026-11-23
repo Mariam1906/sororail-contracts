@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! Cross-contract integration tests for SoroRail.
 //!
 //! This crate carries no library code. The tests live in `tests/`, where each

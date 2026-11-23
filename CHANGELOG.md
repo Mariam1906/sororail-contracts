@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `escrow::extend_deadline(new_deadline)` moves the deadline of a `Funded` escrow later. It requires authorization from both the depositor and the beneficiary, fails once the deadline has been reached, and emits `DeadlineExtended` with the old and new values (#377).
+- `escrow::time_to_deadline()` is a read-only view returning the seconds left until the deadline on the ledger clock, `0` once it has been reached (#378).
+- `escrow::resolve_timeout(caller)` refunds the depositor once the optional `dispute_timeout` has elapsed since `dispute`. Either party may call it. The arbiter's `resolve` remains available until then, so the first transaction to land decides the outcome (#379). The trade-off is documented in SECURITY.md.
 - Per-contract crate READMEs rendered through rustdoc, a per-contract threat
   model, `source_repo` contract metadata, and a regression test proving that a
   deauthorized recipient cannot corrupt a stream on a flagged Stellar Asset
@@ -41,6 +44,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Breaking (ABI):** `escrow::init` takes a new trailing `dispute_timeout: Option<u64>` argument, and the `Escrow` record gains `dispute_timeout` and `disputed_at` fields. Pass `None` to keep the previous behavior. `Some(0)` is rejected with `InvalidDuration`, and `Some(_)` without an arbiter with `EscrowNoArbiter`.
+- `sororail_common::Error` gains `EscrowNoDisputeTimeout` (28) and `EscrowDisputeTimeoutNotReached` (29). Existing codes are unchanged.
 - **Breaking (Rust API):** removed the unused `sororail_common::auth::allow_list`
   and `require_auth_one_of` helpers (#28). Use `require_auth_either` or
   `require_auth_either_opt` for the supported two-party authorization patterns.

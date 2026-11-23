@@ -79,6 +79,7 @@ fn init_rejects_a_second_call() {
         &f.token.address,
         &AMOUNT,
         &DEADLINE,
+        &None,
     );
     assert_eq!(res, Err(Ok(Error::AlreadyInitialized)));
 }
@@ -104,6 +105,7 @@ fn init_rejects_arbiter_equal_to_depositor_or_beneficiary() {
                 &token,
                 &AMOUNT,
                 &DEADLINE,
+                &None,
             ),
             Err(Ok(Error::EscrowArbiterNotNeutral))
         );
@@ -118,6 +120,7 @@ fn init_rejects_arbiter_equal_to_depositor_or_beneficiary() {
             &token,
             &AMOUNT,
             &DEADLINE,
+            &None,
         );
         assert_eq!(client.get().arbiter, Some(neutral_arbiter.clone()));
     }
@@ -133,7 +136,7 @@ fn init_allows_no_arbiter_even_when_depositor_equals_beneficiary() {
 
     // Neutrality applies only when Some(arbiter) is requested. Existing
     // no-arbitration and same-party agreements remain backward-compatible.
-    client.init(&party, &party, &None, &token, &AMOUNT, &DEADLINE);
+    client.init(&party, &party, &None, &token, &AMOUNT, &DEADLINE, &None);
     let agreement = client.get();
     assert_eq!(agreement.arbiter, None);
     assert_eq!(agreement.depositor, agreement.beneficiary);
@@ -150,7 +153,7 @@ fn init_rejects_non_positive_amounts() {
     let t = Address::generate(&env);
 
     for bad in [0i128, -1, i128::MIN] {
-        let res = client.try_init(&a, &b, &None, &t, &bad, &DEADLINE);
+        let res = client.try_init(&a, &b, &None, &t, &bad, &DEADLINE, &None);
         assert_eq!(
             res,
             Err(Ok(Error::InvalidAmount)),
@@ -171,7 +174,7 @@ fn init_rejects_a_deadline_that_is_not_in_the_future() {
 
     // Equal to now, and in the past.
     for bad in [START_TS, START_TS - 1, 0] {
-        let res = client.try_init(&a, &b, &None, &t, &AMOUNT, &bad);
+        let res = client.try_init(&a, &b, &None, &t, &AMOUNT, &bad, &None);
         assert_eq!(
             res,
             Err(Ok(Error::InvalidTimeRange)),
@@ -212,6 +215,7 @@ fn init_requires_the_depositors_authorization() {
         &Address::generate(&env),
         &AMOUNT,
         &DEADLINE,
+        &None,
     );
 }
 
@@ -235,6 +239,7 @@ fn init_emits_created_event_with_correct_topics_and_data() {
         &token_address,
         &AMOUNT,
         &DEADLINE,
+        &None,
     );
 
     let all = env.events().all();

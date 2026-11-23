@@ -1,4 +1,6 @@
+#![forbid(unsafe_code)]
 #![no_std]
+#![warn(missing_docs)]
 #![doc = r#"
 Shared primitives for the SoroRail payment contracts.
 

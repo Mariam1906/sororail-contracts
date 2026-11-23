@@ -28,6 +28,12 @@
 //! | [`Error::EscrowAlreadyDisputed`] | `dispute` when already disputed |
 //! | [`Error::EscrowNotCancellable`] | `cancel` when not in `Created` |
 //! | [`Error::EscrowArbiterNotNeutral`] | `init` when the arbiter is either escrow party |
+//! | [`Error::InvalidDuration`] | `init` with `dispute_timeout = Some(0)` |
+//! | [`Error::EscrowNoArbiter`] | `init` with `dispute_timeout = Some(_)` and no arbiter (also `dispute`) |
+//! | [`Error::EscrowNoDisputeTimeout`] | `resolve_timeout` when `init` set no `dispute_timeout` |
+//! | [`Error::EscrowDisputeTimeoutNotReached`] | `resolve_timeout` before `disputed_at + dispute_timeout` |
+//! | [`Error::DeadlinePassed`] | `extend_deadline` at or after the current deadline |
+//! | [`Error::InvalidTimeRange`] | `extend_deadline` with a new deadline not strictly later than the current one |
 //!
 //! # What is absent, and why
 //!
@@ -49,8 +55,9 @@
 //!   depositor who cannot cover `amount` makes the token's `transfer` fail with
 //!   the token's own error, which aborts `fund`; once funded, the contract
 //!   always holds exactly `amount`.
-//! - `InvalidDuration` -- the deadline is an absolute timestamp, not a span, so
-//!   a bad deadline is reported as `InvalidTimeRange`.
+//! - `InvalidDuration` is returned only for a zero `dispute_timeout`. The
+//!   deadline is an absolute timestamp, not a span, so a bad deadline is still
+//!   reported as `InvalidTimeRange`.
 //! - `IdenticalParties` -- `init` does not reject `depositor == beneficiary`.
 //!   Such an escrow can only return funds to the address that supplied them.
 //! - `Underflow`, `DivisionByZero` -- `split_bps` derives the remainder by

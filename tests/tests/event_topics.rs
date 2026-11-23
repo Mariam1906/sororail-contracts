@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! Workspace-wide lint on event topic naming.
 //!
 //! `sororail_common::events` makes the topic scheme normative: every
@@ -238,6 +239,7 @@ fn every_public_event_has_a_pinned_topic_name() {
         ("batch_payout", "ExecutedMany", "executed_many"),
         ("escrow", "Cancelled", "cancelled"),
         ("escrow", "Created", "created"),
+        ("escrow", "DeadlineExtended", "deadline_extended"),
         ("escrow", "Disputed", "disputed"),
         ("escrow", "Funded", "funded"),
         ("escrow", "Refunded", "refunded"),

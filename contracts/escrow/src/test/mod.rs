@@ -7,19 +7,22 @@ use sororail_common::{storage::INSTANCE_BUMP, testutils::TestEnv, Error};
 
 use crate::{
     contract::{EscrowContract, EscrowContractClient},
-    events::{Cancelled, Created, Disputed, Funded, Refunded, Released, Resolved},
+    events::{Cancelled, Created, DeadlineExtended, Disputed, Funded, Refunded, Released, Resolved},
     types::State,
 };
 
 mod budget;
 mod cancel;
 mod dispute;
+mod dispute_timeout;
+mod extend_deadline;
 mod fee_on_transfer;
 mod fund;
 mod init;
 mod refund;
 mod release;
 mod resolve;
+mod time_to_deadline;
 
 const AMOUNT: i128 = 1_000_000;
 const START_TS: u64 = 1_000_000;
@@ -43,6 +46,16 @@ impl Fixture<'_> {
     }
 
     fn with_amount(with_arbiter: bool, amount: i128) -> Self {
+        Self::build(with_arbiter, amount, None)
+    }
+
+    /// An arbiter-backed escrow whose disputes can time out after `timeout`
+    /// seconds.
+    fn with_dispute_timeout(timeout: u64) -> Self {
+        Self::build(true, AMOUNT, Some(timeout))
+    }
+
+    fn build(with_arbiter: bool, amount: i128, dispute_timeout: Option<u64>) -> Self {
         let te = TestEnv::at(START_TS);
         let (token, depositor) = te.make_token(
             amount
@@ -69,6 +82,7 @@ impl Fixture<'_> {
             &token_address,
             &amount,
             &DEADLINE,
+            &dispute_timeout,
         );
 
         Fixture {
