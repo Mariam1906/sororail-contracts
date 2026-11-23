@@ -55,6 +55,7 @@ pub fn extend_instance(env: &Env) {
 /// - `is_initialized(env: &Env) -> bool`
 /// - `load(env: &Env) -> Result<YourType, Error>` (extends TTL)
 /// - `load_view(env: &Env) -> Result<YourType, Error>` (read-only)
+/// - `try_load(env: &Env) -> Option<YourType>` (read-only, `None` when absent)
 /// - `save(env: &Env, value: &YourType)` (extends TTL)
 #[macro_export]
 macro_rules! impl_single_position_storage {
@@ -81,6 +82,15 @@ macro_rules! impl_single_position_storage {
                 .instance()
                 .get(&$key)
                 .ok_or($crate::Error::NotInitialized)
+        }
+
+        /// Loads the value without changing ledger state, or `None` if it is absent.
+        ///
+        /// One storage read, so code that wants an `Option` does not pay for
+        /// `is_initialized` plus a load. Like `load_view` it does not extend the
+        /// TTL; a mutating path should use `load`.
+        pub fn try_load(env: &::soroban_sdk::Env) -> Option<$type> {
+            env.storage().instance().get(&$key)
         }
 
         /// Persists the value and extends the instance TTL.
@@ -197,6 +207,37 @@ mod tests {
             assert_eq!(
                 loaded_view, test_data,
                 "load_view should return same value as load"
+            );
+        });
+    }
+
+    /// Issue #374: `try_load` returns `None` for an absent key instead of
+    /// erroring like `load`.
+    #[test]
+    fn test_try_load_returns_none_when_absent() {
+        let (env, id) = host();
+        env.as_contract(&id, || {
+            assert!(
+                try_load(&env).is_none(),
+                "try_load should return None before save"
+            );
+        });
+    }
+
+    /// Issue #374: `try_load` returns the saved value when the key is present.
+    #[test]
+    fn test_try_load_returns_some_after_save() {
+        let (env, id) = host();
+        let test_data = TestData {
+            value: 7,
+            name: soroban_sdk::String::from_str(&env, "try-load"),
+        };
+        env.as_contract(&id, || {
+            save(&env, &test_data);
+            assert_eq!(
+                try_load(&env),
+                Some(test_data.clone()),
+                "try_load should return the saved value"
             );
         });
     }
