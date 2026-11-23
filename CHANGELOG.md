@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `sororail_common::storage` single-position macro gains `try_load(env) -> Option<T>`,
+  a read-only single storage read that returns `None` when the value is absent.
+  It does not extend the TTL, like `load_view` (#374).
+- `sororail_common::testutils`: `TestEnv::advance_by(seconds)` (panics on `u64`
+  overflow), `TestEnv::advance_to_end_of(ts)` (panics if `ts` is in the past), and
+  `TestEnv::make_token_with_admin(supply)`, which returns the token client, the
+  admin client and the funder. The token is revocable so tests can deauthorize a
+  holder. `make_token` is unchanged (#372, #373).
+- CI and `make build` now build `sororail-common` alone for `wasm32v1-none`, so
+  a std-only dependency in `common` fails the build (#376).
 - Per-contract crate READMEs rendered through rustdoc, a per-contract threat
   model, `source_repo` contract metadata, and a regression test proving that a
   deauthorized recipient cannot corrupt a stream on a flagged Stellar Asset
