@@ -123,6 +123,9 @@ pub enum Error {
     EscrowNoDisputeTimeout = 28,
     /// `resolve_timeout` called before `disputed_at + dispute_timeout`.
     EscrowDisputeTimeoutNotReached = 29,
+    /// `fund` received a net transfer that did not increase the escrow balance
+    /// by the requested amount.
+    EscrowBalanceMismatch = 30,
 
     // ----- stream: 40–59 -----
     /// Reserved for the future id-keyed stream design.

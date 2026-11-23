@@ -56,6 +56,30 @@ fn resolve_rejects_basis_points_above_the_maximum() {
 }
 
 #[test]
+fn resolve_rejects_arbiter_fee_above_the_cap() {
+    let te = TestEnv::at(START_TS);
+    let (token, depositor) = te.make_token(AMOUNT * 10);
+    let beneficiary = te.make_address();
+    let arbiter = te.make_address();
+    let env = te.env();
+    let client = EscrowContractClient::new(env, &env.register(EscrowContract, ()));
+    assert_eq!(
+        client.try_init(
+            &depositor,
+            &beneficiary,
+            &Some(arbiter),
+            &token.address,
+            &AMOUNT,
+            &DEADLINE,
+            &None,
+            &None,
+            &1_001,
+        ),
+        Err(Ok(Error::InvalidBasisPoints))
+    );
+}
+
+#[test]
 fn resolve_rejects_a_split_whose_product_overflows_at_the_max_amount() {
     // `split_bps` multiplies `amount * bps` in i128 before dividing, so an
     // escrow holding exactly i128::MAX can only be resolved at 0 or 1 bps;
@@ -76,6 +100,10 @@ fn resolve_rejects_a_split_whose_product_overflows_at_the_max_amount() {
         &i128::MAX,
         &DEADLINE,
         &None,
+        &None,
+        &0,
+        &None,
+        &0,
     );
     client.fund();
     client.dispute(&depositor);
@@ -210,6 +238,8 @@ fn disputed_with_strict_token(
         &AMOUNT,
         &DEADLINE,
         &None,
+        &None,
+        &0,
     );
     client.fund();
     client.dispute(&depositor);
@@ -287,6 +317,33 @@ fn resolve_conserves_the_escrowed_amount_at_every_split() {
     }
 }
 
+#[test]
+fn arbiter_fee_split_conserves_every_supported_fee() {
+    for fee_bps in [0u32, 1, 333, 500, 999, 1_000] {
+        let f = Fixture::funded(true);
+        f.env.as_contract(&f.client.address, || {
+            let mut escrow = crate::storage::load(&f.env).unwrap();
+            escrow.arbiter_fee_bps = fee_bps;
+            crate::storage::save(&f.env, &escrow);
+        });
+        let depositor_before = f.token.balance(&f.depositor);
+        let arbiter_before = f.token.balance(&f.arbiter);
+        f.client.dispute(&f.depositor);
+        f.client.resolve(&3_333);
+
+        let fee = f.token.balance(&f.arbiter) - arbiter_before;
+        let beneficiary = f.token.balance(&f.beneficiary);
+        let depositor_gain = f.token.balance(&f.depositor) - depositor_before;
+        assert_eq!(
+            fee + beneficiary + depositor_gain,
+            AMOUNT,
+            "{fee_bps}bps arbiter fee leaked value"
+        );
+        assert_eq!(fee, sororail_common::math::mul_bps(AMOUNT, fee_bps).unwrap());
+        assert_eq!(f.escrow_balance(), 0);
+    }
+}
+
 mod resolve_properties {
     use proptest::prelude::*;
 
@@ -350,6 +407,8 @@ fn init_with_beneficiary_as_contract_address_succeeds() {
         &AMOUNT,
         &DEADLINE,
         &None,
+        &None,
+        &0,
     );
     assert!(
         result.is_ok(),
@@ -382,6 +441,8 @@ fn init_with_depositor_as_contract_address_succeeds() {
         &AMOUNT,
         &DEADLINE,
         &None,
+        &None,
+        &0,
     );
     assert!(
         result.is_ok(),
@@ -414,6 +475,8 @@ fn init_rejects_multiple_invalid_args_in_order() {
         &AMOUNT,
         &DEADLINE,
         &None,
+        &None,
+        &0,
     );
     assert_eq!(
         client.try_init(
@@ -469,6 +532,7 @@ fn resolve_emits_resolved_event_with_correct_topics_and_data() {
     let resolved_event = events.last().expect("no events emitted");
     let expected = Resolved {
         arbiter: f.arbiter.clone(),
+        fee: 0,
         split_bps: 2_500,
         to_beneficiary: AMOUNT / 4,
         to_depositor: AMOUNT * 3 / 4,

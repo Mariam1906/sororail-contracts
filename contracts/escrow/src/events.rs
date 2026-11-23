@@ -4,7 +4,7 @@
 //! `sororail_common::events`: fixed topics `[contract, action]`, then the
 //! attributed address as the single `#[topic]` field, with amounts as data.
 
-use soroban_sdk::{contractevent, Address};
+use soroban_sdk::{contractevent, Address, BytesN};
 
 /// `init` succeeded. The escrow is configured but not yet funded.
 #[contractevent(topics = ["escrow", "created"])]
@@ -16,6 +16,7 @@ pub struct Created {
     pub token: Address,
     pub amount: i128,
     pub deadline: u64,
+    pub reference: Option<BytesN<32>>,
 }
 
 /// Funds have been pulled from the depositor into the contract.
@@ -25,6 +26,7 @@ pub struct Funded {
     #[topic]
     pub depositor: Address,
     pub amount: i128,
+    pub reference: Option<BytesN<32>>,
 }
 
 /// Paid out to the beneficiary.
@@ -68,6 +70,7 @@ pub struct Disputed {
 pub struct Resolved {
     #[topic]
     pub arbiter: Address,
+    pub fee: i128,
     /// Share paid to the beneficiary, in basis points (`0`..=`10000`).
     pub split_bps: u32,
     pub to_beneficiary: i128,

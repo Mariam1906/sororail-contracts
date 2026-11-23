@@ -47,6 +47,8 @@ fn fund_reverts_cleanly_when_depositor_cannot_pay() {
         &AMOUNT,
         &DEADLINE,
         &None,
+        &None,
+        &0,
     );
     assert_eq!(client.state(), State::Created);
 
@@ -110,6 +112,23 @@ fn fund_just_before_the_deadline_succeeds() {
 }
 
 #[test]
+fn is_fundable_agrees_with_fund_across_states_and_times() {
+    for (advance, should_fund) in [(0u64, true), (DEADLINE - START_TS - 1, true), (DEADLINE - START_TS, false), (DEADLINE - START_TS + 1, false)] {
+        let f = Fixture::new(true);
+        f.env.ledger().with_mut(|l| l.timestamp = START_TS + advance);
+        assert_eq!(f.client.is_fundable(), should_fund);
+        if should_fund {
+            f.client.fund();
+            assert_eq!(f.client.is_fundable(), false);
+            assert_eq!(f.client.try_fund(), Err(Ok(Error::EscrowNotFundable)));
+        } else {
+            assert!(f.client.try_fund().is_err());
+            assert_eq!(f.client.state(), State::Created);
+        }
+    }
+}
+
+#[test]
 fn fund_emits_funded_event_with_correct_topics_and_data() {
     let f = Fixture::new(true);
     f.client.fund();
@@ -122,6 +141,7 @@ fn fund_emits_funded_event_with_correct_topics_and_data() {
     let expected = Funded {
         depositor: f.depositor.clone(),
         amount: AMOUNT,
+        reference: None,
     };
     assert_eq!(funded_event, &expected.to_xdr(&f.env, &f.client.address));
 }
