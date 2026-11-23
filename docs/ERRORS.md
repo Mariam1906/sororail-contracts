@@ -36,6 +36,7 @@ or renumbers a variant in `errors.rs`.
 | 27 | `EscrowArbiterNotNeutral` | escrow | `init` configured an arbiter equal to the depositor or beneficiary. |
 | 28 | `EscrowNoDisputeTimeout` | escrow | `resolve_timeout` called on an escrow whose `init` set no `dispute_timeout`. |
 | 29 | `EscrowDisputeTimeoutNotReached` | escrow | `resolve_timeout` called before `disputed_at + dispute_timeout`. |
+| 30 | `EscrowBalanceMismatch` | escrow | `fund` transfer did not increase the contract balance by the requested amount. |
 | 40 | `StreamNotFound` | stream | No stream exists for the given id. |
 | 41 | `StreamCancelled` | stream | The stream has already been cancelled. |
 | 42 | `StreamNotCancellable` | stream | `cancel` called on a stream created with `cancellable = false`. |

@@ -1,4 +1,4 @@
-use soroban_sdk::{contracttype, Address};
+use soroban_sdk::{contracttype, Address, BytesN};
 
 /// The escrow lifecycle.
 ///
@@ -99,6 +99,10 @@ pub struct Escrow {
     /// leaving the arbiter (and the grace-period refund) as the only ways out
     /// of a dispute. Only meaningful when `arbiter` is `Some`.
     pub dispute_timeout: Option<u64>,
+    /// Optional off-chain order or reference identifier.
+    pub reference: Option<BytesN<32>>,
+    /// Arbiter fee in basis points, applied when resolving a dispute.
+    pub arbiter_fee_bps: u32,
     /// Ledger timestamp at which the escrow entered `Disputed`. `None` until
     /// `dispute` runs.
     pub disputed_at: Option<u64>,

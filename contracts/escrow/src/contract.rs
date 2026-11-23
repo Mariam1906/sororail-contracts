@@ -1,4 +1,4 @@
-use soroban_sdk::{contract, contractimpl, token, Address, Env};
+use soroban_sdk::{contract, contractimpl, token, Address, BytesN, Env};
 use sororail_common::{auth, math, Error};
 
 use crate::{
@@ -49,6 +49,8 @@ impl EscrowContract {
         amount: i128,
         deadline: u64,
         dispute_timeout: Option<u64>,
+        reference: Option<BytesN<32>>,
+        arbiter_fee_bps: u32,
     ) -> Result<(), Error> {
         if storage::is_initialized(&env) {
             return Err(Error::AlreadyInitialized);
@@ -73,6 +75,9 @@ impl EscrowContract {
         if dispute_timeout.is_some() && arbiter.is_none() {
             return Err(Error::EscrowNoArbiter);
         }
+        if arbiter_fee_bps > 1_000 {
+            return Err(Error::InvalidBasisPoints);
+        }
         depositor.require_auth();
 
         let escrow = Escrow {
@@ -83,6 +88,8 @@ impl EscrowContract {
             amount,
             deadline,
             dispute_timeout,
+            reference: reference.clone(),
+            arbiter_fee_bps,
             disputed_at: None,
             created_at: env.ledger().timestamp(),
             funded_at: None,
@@ -95,6 +102,7 @@ impl EscrowContract {
             token,
             amount,
             deadline,
+            reference,
         }
         .publish(&env);
         Ok(())
@@ -134,25 +142,39 @@ impl EscrowContract {
         if escrow.state.is_terminal() {
             return Err(Error::EscrowClosed);
         }
-        auth::require(escrow.state == State::Created, Error::EscrowNotFundable)?;
         let now = env.ledger().timestamp();
-        if now >= escrow.deadline {
+        if !Self::is_fundable(&escrow, now) {
+            if escrow.state != State::Created {
+                return Err(Error::EscrowNotFundable);
+            }
             return Err(Error::DeadlinePassed);
         }
         escrow.depositor.require_auth();
 
+        let token = token::TokenClient::new(&env, &escrow.token);
+        let contract_address = env.current_contract_address();
+        let balance_before = token.balance(&contract_address);
         escrow.state = State::Funded;
         escrow.funded_at = Some(now);
         storage::save(&env, &escrow);
 
-        token::TokenClient::new(&env, &escrow.token).transfer(
+        token.transfer(
             &escrow.depositor,
-            env.current_contract_address(),
+            &contract_address,
             &escrow.amount,
         );
+        let balance_after = token.balance(&contract_address);
+        let expected = balance_before
+            .checked_add(escrow.amount)
+            .ok_or(Error::Overflow)?;
+        auth::require(
+            balance_after == expected,
+            Error::EscrowBalanceMismatch,
+        )?;
         events::Funded {
             depositor: escrow.depositor.clone(),
             amount: escrow.amount,
+            reference: escrow.reference.clone(),
         }
         .publish(&env);
         Ok(())
@@ -371,11 +393,16 @@ impl EscrowContract {
         let arbiter = escrow.arbiter.clone().ok_or(Error::EscrowNoArbiter)?;
         arbiter.require_auth();
 
-        let (to_beneficiary, to_depositor) = math::split_bps(escrow.amount, split_bps)?;
+        let fee = math::mul_bps(escrow.amount, escrow.arbiter_fee_bps)?;
+        let after_fee = escrow.amount - fee;
+        let (to_beneficiary, to_depositor) = math::split_bps(after_fee, split_bps)?;
 
         escrow.state = State::Resolved;
         storage::save(&env, &escrow);
 
+        if fee > 0 {
+            Self::pay(&env, &escrow, &arbiter, fee);
+        }
         if to_beneficiary > 0 {
             Self::pay(&env, &escrow, &escrow.beneficiary, to_beneficiary);
         }
@@ -384,6 +411,7 @@ impl EscrowContract {
         }
         events::Resolved {
             arbiter,
+            fee,
             split_bps,
             to_beneficiary,
             to_depositor,
@@ -395,6 +423,12 @@ impl EscrowContract {
     /// The current lifecycle position.
     pub fn state(env: Env) -> Result<State, Error> {
         Ok(storage::load_view(&env)?.state)
+    }
+
+    /// Whether the escrow can currently be funded.
+    pub fn is_fundable(env: Env) -> Result<bool, Error> {
+        let escrow = storage::load_view(&env)?;
+        Ok(Self::is_fundable(&escrow, env.ledger().timestamp()))
     }
 
     /// Extends the instance TTL for a long-lived escrow without changing it.
@@ -413,6 +447,9 @@ impl EscrowContract {
 // Helpers. Deliberately outside `#[contractimpl]` so they do not become
 // contract entry points.
 impl EscrowContract {
+    fn is_fundable(escrow: &Escrow, now: u64) -> bool {
+        escrow.state == State::Created && now < escrow.deadline
+    }
     /// Errors unless the escrow is holding funds and still open.
     fn require_funded(escrow: &Escrow) -> Result<(), Error> {
         if escrow.state.is_terminal() {

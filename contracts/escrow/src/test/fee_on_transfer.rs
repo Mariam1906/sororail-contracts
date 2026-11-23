@@ -2,9 +2,7 @@
 //!
 //! The mock lives in `sororail-common::testutils::deploy_fee_on_transfer_token`
 //! and skims a configurable basis-point fee on every transfer. Here we show
-//! that an escrow funded with a FOT token lands the NET amount in the
-//! contract, so a downstream test can reason about how much actually
-//! settles when a hostile token is on the other side of `transfer`.
+//! that funding is rejected because the net transfer is not the agreed amount.
 
 use soroban_sdk::{
     testutils::{Address as _, Ledger as _},
@@ -15,7 +13,7 @@ use sororail_common::testutils::{deploy_fee_on_transfer_token, FeeOnTransferToke
 use crate::contract::{EscrowContract, EscrowContractClient};
 
 #[test]
-fn escrow_funded_with_fee_on_transfer_token_sees_the_net_amount() {
+fn escrow_rejects_fee_on_transfer_funding() {
     let env = Env::default();
     env.mock_all_auths();
     env.ledger().with_mut(|l| l.timestamp = 1_000_000);
@@ -38,11 +36,13 @@ fn escrow_funded_with_fee_on_transfer_token_sees_the_net_amount() {
         &amount,
         &(1_000_000 + 10_000),
         &None,
+        &None,
+        &0,
     );
-    escrow.fund();
-
-    // The escrow asked for `amount`; the FOT token skimmed 2% in-flight, so
-    // the contract actually holds 98%. The depositor paid the gross.
-    assert_eq!(fot.balance(&escrow.address), 980_000);
-    assert_eq!(fot.balance(&depositor), 0);
+    assert_eq!(
+        escrow.try_fund(),
+        Err(Ok(sororail_common::Error::EscrowBalanceMismatch))
+    );
+    assert_eq!(fot.balance(&escrow.address), 0);
+    assert_eq!(escrow.state(), crate::types::State::Created);
 }

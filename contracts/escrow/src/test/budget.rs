@@ -47,6 +47,8 @@ fn budget_init() {
             &AMOUNT,
             &DEADLINE,
             &None,
+            &None,
+            &0,
         );
     });
 

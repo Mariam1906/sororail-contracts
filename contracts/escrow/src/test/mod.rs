@@ -89,6 +89,8 @@ impl Fixture<'_> {
             &amount,
             &DEADLINE,
             &dispute_timeout,
+            &None,
+            &0,
         );
 
         Fixture {
