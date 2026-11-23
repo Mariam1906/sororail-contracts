@@ -34,6 +34,8 @@ or renumbers a variant in `errors.rs`.
 | 25 | `EscrowAlreadyDisputed` | escrow | `dispute` called on an escrow that is already disputed. |
 | 26 | `EscrowNotCancellable` | escrow | `cancel` called on an escrow that is not in `Created`. |
 | 27 | `EscrowArbiterNotNeutral` | escrow | `init` configured an arbiter equal to the depositor or beneficiary. |
+| 28 | `EscrowNoDisputeTimeout` | escrow | `resolve_timeout` called on an escrow whose `init` set no `dispute_timeout`. |
+| 29 | `EscrowDisputeTimeoutNotReached` | escrow | `resolve_timeout` called before `disputed_at + dispute_timeout`. |
 | 40 | `StreamNotFound` | stream | No stream exists for the given id. |
 | 41 | `StreamCancelled` | stream | The stream has already been cancelled. |
 | 42 | `StreamNotCancellable` | stream | `cancel` called on a stream created with `cancellable = false`. |

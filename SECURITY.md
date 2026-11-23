@@ -102,6 +102,31 @@ Integrators relying on escrow should document this assumption: arbiters are
 trusted to respond within 7 days of the original deadline, or funds become
 recoverable by the depositor unilaterally.
 
+#### Optional per-escrow dispute timeout
+
+`init` can take a `dispute_timeout` (seconds, requires an arbiter). When it is
+set, either party may call `resolve_timeout` once that long has passed since
+`dispute`, which refunds the depositor. This is opt-in because it moves trust
+from the arbiter to the clock:
+
+- **The beneficiary can be refunded without the arbiter's consent.** Once the
+  timeout passes, the depositor can unilaterally recover the funds, even if the
+  arbiter would have ruled for the beneficiary. A beneficiary who relies on a
+  slow arbiter loses that protection.
+- **The depositor controls when a dispute can be ended by time.** A depositor
+  who raises a dispute and then waits out the timeout recovers the funds
+  without anyone else signing off. Use this option only if the beneficiary
+  accepts that outcome.
+- **The arbiter's authority does not expire.** `resolve` stays callable while
+  the escrow is `Disputed`, so the first transaction after the timeout to land
+  decides the outcome. An arbiter who resolves at `disputed_at + dispute_timeout
+  - 1` always wins. An arbiter who resolves after the timeout but before anyone
+  calls `resolve_timeout` still wins.
+- **Pick a timeout longer than the arbiter's realistic response time.** A short
+  timeout turns an arbiter's delay into a refund. `dispute_timeout = None` keeps
+  the arbiter as the only path out of a dispute, apart from the 7-day grace
+  period above.
+
 ### Token authorization revocation
 
 A Stellar Asset Contract with `AUTH_REQUIRED` and `AUTH_REVOCABLE` can

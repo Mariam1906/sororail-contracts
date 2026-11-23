@@ -75,6 +75,7 @@ fn resolve_rejects_a_split_whose_product_overflows_at_the_max_amount() {
         &token_address,
         &i128::MAX,
         &DEADLINE,
+        &None,
     );
     client.fund();
     client.dispute(&depositor);
@@ -208,6 +209,7 @@ fn disputed_with_strict_token(
         &token.address,
         &AMOUNT,
         &DEADLINE,
+        &None,
     );
     client.fund();
     client.dispute(&depositor);
@@ -347,6 +349,7 @@ fn init_with_beneficiary_as_contract_address_succeeds() {
         &token_address,
         &AMOUNT,
         &DEADLINE,
+        &None,
     );
     assert!(
         result.is_ok(),
@@ -378,6 +381,7 @@ fn init_with_depositor_as_contract_address_succeeds() {
         &token_address,
         &AMOUNT,
         &DEADLINE,
+        &None,
     );
     assert!(
         result.is_ok(),
@@ -409,6 +413,7 @@ fn init_rejects_multiple_invalid_args_in_order() {
         &token_address,
         &AMOUNT,
         &DEADLINE,
+        &None,
     );
     assert_eq!(
         client.try_init(
@@ -417,7 +422,8 @@ fn init_rejects_multiple_invalid_args_in_order() {
             &None,
             &token_address,
             &0,
-            &DEADLINE
+            &DEADLINE,
+            &None
         ),
         Err(Ok(Error::AlreadyInitialized))
     );
@@ -432,7 +438,8 @@ fn init_rejects_multiple_invalid_args_in_order() {
             &None,
             &token_address,
             &0,
-            &(START_TS - 1)
+            &(START_TS - 1),
+            &None
         ),
         Err(Ok(Error::InvalidAmount))
     );

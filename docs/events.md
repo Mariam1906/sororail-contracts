@@ -39,6 +39,7 @@ Every event emits topics in this order:
 | `escrow` | `Funded` | `funded` | `depositor` | `amount` |
 | `escrow` | `Released` | `released` | `beneficiary` | `amount`, `released_by` |
 | `escrow` | `Refunded` | `refunded` | `depositor` | `amount`, `refunded_by` |
+| `escrow` | `DeadlineExtended` | `deadline_extended` | `depositor` | `beneficiary`, `old_deadline`, `new_deadline` |
 | `escrow` | `Disputed` | `disputed` | `raised_by` | - |
 | `escrow` | `Resolved` | `resolved` | `arbiter` | `split_bps`, `to_beneficiary`, `to_depositor` |
 | `escrow` | `Cancelled` | `cancelled` | `depositor` | - |

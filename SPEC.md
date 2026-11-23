@@ -139,8 +139,11 @@ Note on events: the original spec called for shared event-emission helpers here.
 
 Funds held by the contract, released on a condition.
 
-- `init(depositor, beneficiary, arbiter: Option<Address>, token, amount, deadline)`
+- `init(depositor, beneficiary, arbiter: Option<Address>, token, amount, deadline, dispute_timeout: Option<u64>)`
 - `fund()` — pulls tokens from depositor
+- `extend_deadline(new_deadline)` — moves the deadline of a `Funded` escrow later. Requires auth from both depositor and beneficiary. Fails with `DeadlinePassed` at or after the current deadline and with `InvalidTimeRange` unless `new_deadline` is strictly later. Emits `DeadlineExtended`.
+- `time_to_deadline()` — read-only view: seconds until `deadline` on the ledger clock, `0` once reached.
+- `resolve_timeout(caller)` — callable by depositor or beneficiary once `dispute_timeout` has elapsed since `dispute`; refunds the depositor. Requires a configured timeout (`EscrowNoDisputeTimeout`) and fails with `EscrowDisputeTimeoutNotReached` before it elapses. The arbiter's `resolve` stays callable until this runs.
 - `release(caller)` — beneficiary receives; callable by depositor or arbiter
 - `refund(caller)` — callable by depositor after deadline, or by arbiter at any time. If in `Disputed` state, callable by anyone after 7 days past the original deadline to recover from an unresponsive arbiter.
 - `dispute(caller)` / `resolve(split_bps)` — arbiter splits between parties; `split_bps` is the beneficiary's share
@@ -233,7 +236,7 @@ The rule is set by how many parties may call an entry point:
 
 | Contract       | Single fixed party                                            | Several permitted parties (`caller`)                                             |
 | -------------- | ------------------------------------------------------------- | -------------------------------------------------------------------------------- |
-| `escrow`       | `init`, `fund`, `cancel` (depositor); `resolve` (arbiter)     | `release`, `refund` (depositor or arbiter); `dispute` (depositor or beneficiary) |
+| `escrow`       | `init`, `fund`, `cancel` (depositor); `resolve` (arbiter)     | `release`, `refund` (depositor or arbiter); `dispute`, `resolve_timeout` (depositor or beneficiary) |
 | `stream`       | `withdraw` (recipient); `cancel`, `top_up`, `extend` (sender) | —                                                                                |
 | `vesting`      | `claim` (beneficiary); `revoke` (grantor)                     | —                                                                                |
 | `recurring`    | `authorize` (payer); `charge` (payee)                         | `cancel` (payer or payee)                                                        |
@@ -254,6 +257,9 @@ Every public function, and which address(es) may call it. "—" means the functi
 | `escrow`       | `refund`                | depositor or arbiter (anyone, after the dispute grace period)   |
 | `escrow`       | `dispute`               | depositor or beneficiary                                        |
 | `escrow`       | `resolve`               | arbiter                                                         |
+| `escrow`       | `extend_deadline`       | depositor and beneficiary (both sign)                           |
+| `escrow`       | `resolve_timeout`       | depositor or beneficiary (after `dispute_timeout`)              |
+| `escrow`       | `time_to_deadline`      | —                                                               |
 | `escrow`       | `state`, `bump`, `get`  | —                                                                |
 | `stream`       | `create`                | sender                                                          |
 | `stream`       | `withdraw`              | recipient                                                       |

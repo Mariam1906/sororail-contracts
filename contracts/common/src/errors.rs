@@ -113,6 +113,10 @@ pub enum Error {
     EscrowNotCancellable = 26,
     /// `escrow::init` requires a neutral arbiter distinct from both participants.
     EscrowArbiterNotNeutral = 27,
+    /// `resolve_timeout` called on an escrow whose `init` set no `dispute_timeout`.
+    EscrowNoDisputeTimeout = 28,
+    /// `resolve_timeout` called before `disputed_at + dispute_timeout`.
+    EscrowDisputeTimeoutNotReached = 29,
 
     // ----- stream: 40–59 -----
     /// Reserved for the future id-keyed stream design.

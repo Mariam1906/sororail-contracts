@@ -46,6 +46,7 @@ fn fund_reverts_cleanly_when_depositor_cannot_pay() {
         &token_address,
         &AMOUNT,
         &DEADLINE,
+        &None,
     );
     assert_eq!(client.state(), State::Created);
 

@@ -143,6 +143,7 @@ fn eighteen_decimal_token_lifecycles_conserve_value_across_every_contract() {
         &s.token.address,
         &(3 * ATOMIC_18),
         &(START + 100),
+        &None,
     );
     s.escrow.fund();
     s.escrow.release(&s.employer);
@@ -261,6 +262,7 @@ fn an_operations_month_conserves_every_token() {
         &s.token.address,
         &2_000_000,
         &(START + MONTH * 2),
+        &None,
     );
     s.escrow.fund();
     s.assert_nothing_lost(&parties);
@@ -332,6 +334,7 @@ fn escrow_dispute_resolution_completes_the_lifecycle() {
         &s.token.address,
         &amount,
         &deadline,
+        &None,
     );
     assert_eq!(s.escrow.state(), sororail_escrow::State::Created);
     assert_eq!(s.balance(&s.escrow.address), 0);
@@ -546,6 +549,7 @@ fn each_contracts_instance_ttl_survives_a_long_ledger_advance() {
         &s.token.address,
         &2_000_000,
         &(START + MONTH * 2),
+        &None,
     );
     s.escrow.fund();
     s.recurring.authorize(
@@ -608,6 +612,7 @@ fn contracts_sharing_a_token_stay_isolated() {
         &s.token.address,
         &50_000,
         &(START + 10_000),
+        &None,
     );
     s.escrow.fund();
 
@@ -760,6 +765,7 @@ fn a_full_size_batch_runs_within_a_populated_system() {
         &s.token.address,
         &1_000,
         &(START + 10_000),
+        &None,
     );
     s.escrow.fund();
 
@@ -1055,6 +1061,7 @@ fn escrow_release_into_batch_payout_fans_out_funds_to_recipients() {
         &s.token.address,
         &escrowed,
         &(START + MONTH),
+        &None,
     );
     s.escrow.fund();
     assert_eq!(s.balance(&s.escrow.address), escrowed);

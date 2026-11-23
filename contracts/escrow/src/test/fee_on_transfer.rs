@@ -34,6 +34,7 @@ fn escrow_funded_with_fee_on_transfer_token_sees_the_net_amount() {
         &token_addr,
         &amount,
         &(1_000_000 + 10_000),
+        &None,
     );
     escrow.fund();
 

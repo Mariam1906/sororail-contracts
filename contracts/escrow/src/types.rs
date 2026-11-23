@@ -94,6 +94,14 @@ pub struct Escrow {
     pub amount: i128,
     /// Ledger timestamp after which the depositor may unilaterally refund.
     pub deadline: u64,
+    /// Seconds after `disputed_at` before either party may call
+    /// `resolve_timeout` to refund the depositor. `None` disables that path,
+    /// leaving the arbiter (and the grace-period refund) as the only ways out
+    /// of a dispute. Only meaningful when `arbiter` is `Some`.
+    pub dispute_timeout: Option<u64>,
+    /// Ledger timestamp at which the escrow entered `Disputed`. `None` until
+    /// `dispute` runs.
+    pub disputed_at: Option<u64>,
     /// Current lifecycle position.
     pub state: State,
 }
