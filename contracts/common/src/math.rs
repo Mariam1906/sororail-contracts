@@ -45,21 +45,30 @@ pub const fn remaining_count(cap: Option<u32>, used: u32) -> Option<u32> {
 /// Maximum valid basis points.
 pub const MAX_BPS: u32 = 10_000;
 
+/// Checked addition. Errors with [`Error::Overflow`] when the sum falls
+/// outside the `i128` range.
 #[inline]
 pub fn add(a: i128, b: i128) -> Result<i128, Error> {
     a.checked_add(b).ok_or(Error::Overflow)
 }
 
+/// Checked subtraction. Errors with [`Error::Underflow`] when the difference
+/// falls below `i128::MIN`.
 #[inline]
 pub fn sub(a: i128, b: i128) -> Result<i128, Error> {
     a.checked_sub(b).ok_or(Error::Underflow)
 }
 
+/// Checked multiplication. Errors with [`Error::Overflow`] when the product
+/// falls outside the `i128` range.
 #[inline]
 pub fn mul(a: i128, b: i128) -> Result<i128, Error> {
     a.checked_mul(b).ok_or(Error::Overflow)
 }
 
+/// Checked division, truncating toward zero. Errors with
+/// [`Error::DivisionByZero`] when `b` is zero, and with [`Error::Overflow`]
+/// when the quotient does not fit in `i128` (only `i128::MIN / -1`).
 #[inline]
 pub fn div(a: i128, b: i128) -> Result<i128, Error> {
     if b == 0 {

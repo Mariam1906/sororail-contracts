@@ -83,6 +83,13 @@ extended. Use `sororail_common::storage`.
 **Illegal state transitions must error, not panic.** A panic gives the caller a
 useless failure; a typed error tells them what happened.
 
+**No `unsafe` code.** Every crate root, including the test and build-script
+roots, carries `#![forbid(unsafe_code)]`, so an `unsafe` block anywhere in the
+workspace fails compilation. `sororail-common` also sets
+`#![warn(missing_docs)]`, and `make lint` runs clippy with `-D warnings`, so
+any undocumented public item there fails CI. Document new public items in
+`common` when you add them.
+
 ## Entry Point Anatomy
 
 New contract entry points should follow the same order every time so review can focus on behavior instead of rediscovering authorization and state assumptions:

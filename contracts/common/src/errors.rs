@@ -1,3 +1,9 @@
+//! Shared error type for every SoroRail contract.
+//!
+//! [`Error`] is the single enum used by `escrow`, `stream`, `vesting`,
+//! `recurring` and `batch_payout`. Each variant's integer is part of the public
+//! ABI, so the numbering ranges and stability rules are documented on the type.
+
 use soroban_sdk::contracterror;
 
 /// The single error enum shared by every SoroRail contract.

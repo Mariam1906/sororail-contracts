@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! Workspace-wide lint on event topic naming.
 //!
 //! `sororail_common::events` makes the topic scheme normative: every

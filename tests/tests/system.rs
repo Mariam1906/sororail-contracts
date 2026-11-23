@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! Cross-contract integration tests.
 //!
 //! Each contract's own unit tests already prove it conserves value internally.

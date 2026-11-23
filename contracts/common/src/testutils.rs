@@ -202,10 +202,13 @@ pub enum FeeTokenKey {
     Allowance(Address, Address),
 }
 
+/// Allowance a holder has granted a spender on [`FeeOnTransferToken`].
 #[contracttype]
 #[derive(Clone)]
 pub struct FeeTokenAllowance {
+    /// Remaining amount the spender may move.
     pub amount: i128,
+    /// Ledger sequence number recorded with the allowance.
     pub expiration_ledger: u32,
 }
 
@@ -264,10 +267,13 @@ impl FeeOnTransferToken {
 
     // ── token::TokenInterface ─────────────────────────────────────────────
 
+    /// Returns the balance held by `id`.
     pub fn balance(env: Env, id: Address) -> i128 {
         read_balance(&env, &id)
     }
 
+    /// Moves `amount` from `from` to `to`, skimming the configured fee into the
+    /// fee sink. Requires `from`'s authorization.
     #[allow(deprecated)]
     pub fn transfer(env: Env, from: Address, to: Address, amount: i128) {
         from.require_auth();
@@ -299,6 +305,9 @@ impl FeeOnTransferToken {
         }
     }
 
+    /// Moves `amount` from `from` to `to` on behalf of `spender`, spending the
+    /// allowance and skimming the configured fee. Requires `spender`'s
+    /// authorization.
     #[allow(deprecated)]
     pub fn transfer_from(env: Env, spender: Address, from: Address, to: Address, amount: i128) {
         spender.require_auth();
@@ -332,6 +341,8 @@ impl FeeOnTransferToken {
         }
     }
 
+    /// Sets `spender`'s allowance over `from`'s balance to `amount`, recorded
+    /// with `expiration_ledger`. Requires `from`'s authorization.
     pub fn approve(
         env: Env,
         from: Address,
@@ -350,10 +361,12 @@ impl FeeOnTransferToken {
         );
     }
 
+    /// Returns the remaining allowance `spender` holds over `from`'s balance.
     pub fn allowance(env: Env, from: Address, spender: Address) -> i128 {
         read_allowance(&env, &from, &spender).amount
     }
 
+    /// Returns the configured decimals, defaulting to `7`.
     pub fn decimals(env: Env) -> u32 {
         env.storage()
             .instance()
@@ -361,6 +374,7 @@ impl FeeOnTransferToken {
             .unwrap_or(7)
     }
 
+    /// Returns the configured token name, defaulting to `FeeMock`.
     pub fn name(env: Env) -> String {
         env.storage()
             .instance()
@@ -368,6 +382,7 @@ impl FeeOnTransferToken {
             .unwrap_or_else(|| String::from_str(&env, "FeeMock"))
     }
 
+    /// Returns the configured token symbol, defaulting to `FEE`.
     pub fn symbol(env: Env) -> String {
         env.storage()
             .instance()
@@ -375,6 +390,7 @@ impl FeeOnTransferToken {
             .unwrap_or_else(|| String::from_str(&env, "FEE"))
     }
 
+    /// Destroys `amount` of `from`'s balance. Requires `from`'s authorization.
     pub fn burn(env: Env, from: Address, amount: i128) {
         from.require_auth();
         assert!(amount >= 0);
@@ -383,6 +399,8 @@ impl FeeOnTransferToken {
         write_balance(&env, &from, b - amount);
     }
 
+    /// Destroys `amount` of `from`'s balance on behalf of `spender`, spending
+    /// the allowance. Requires `spender`'s authorization.
     pub fn burn_from(env: Env, spender: Address, from: Address, amount: i128) {
         spender.require_auth();
         assert!(amount >= 0);
