@@ -846,7 +846,7 @@ fn withdraw_requires_the_recipients_authorization() {
 
     // Drop the mocks, then withdraw with nobody authorized.
     env.set_auths(&[]);
-    env.ledger().with_mut(|l| l.timestamp = START + 100);
+    te.advance_by(100);
     c.withdraw(&None);
 }
 
@@ -1916,7 +1916,7 @@ mod conservation_properties {
             for op in ops {
                 match op {
                     Op::Advance(delta) => {
-                        te.advance_to(te.timestamp().saturating_add(delta));
+                        te.advance_by(delta);
                     }
                     Op::WithdrawAll => {
                         let _ = client.try_withdraw(&None);

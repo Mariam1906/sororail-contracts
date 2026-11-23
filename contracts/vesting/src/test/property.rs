@@ -150,7 +150,7 @@ mod conservation_properties {
             for op in ops {
                 match op {
                     Op::Advance(delta) => {
-                        te.advance_to(te.timestamp().saturating_add(delta));
+                        te.advance_by(delta);
                     }
                     Op::Claim => {
                         let _ = client.try_claim();

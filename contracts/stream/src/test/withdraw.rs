@@ -239,6 +239,6 @@ fn withdraw_requires_the_recipients_authorization() {
 
     // Drop the mocks, then withdraw with nobody authorized.
     env.set_auths(&[]);
-    env.ledger().with_mut(|l| l.timestamp = START + 100);
+    te.advance_by(100);
     c.withdraw(&None);
 }
