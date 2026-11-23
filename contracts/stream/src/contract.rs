@@ -91,27 +91,33 @@ impl StreamContract {
     /// `None` withdraws everything currently available. Returns the amount
     /// actually withdrawn.
     pub fn withdraw(env: Env, amount: Option<i128>) -> Result<i128, Error> {
-        let mut stream = storage::load(&env)?;
-        stream.recipient.require_auth();
+        let stream = storage::load(&env)?;
+        let recipient = stream.recipient.clone();
+        Self::withdraw_into(&env, stream, &recipient, amount)
+    }
 
-        let available = stream.available_at(env.ledger().timestamp())?;
-        let requested = amount.unwrap_or(available);
-        math::require_positive(requested)?;
-        if requested > available {
-            return Err(Error::StreamInsufficientAccrued);
+    /// Withdraws accrued funds like `withdraw`, but pays them to
+    /// `destination` (for example a treasury or an exchange deposit address)
+    /// in the same transaction.
+    ///
+    /// Requires the recipient's authorization, exactly like `withdraw`: the
+    /// recipient owns the accrued funds and chooses where they go. Accrual,
+    /// the `withdrawn` total and every check are shared with `withdraw`, so
+    /// the stream's accounting is identical whichever entry point is used.
+    /// `destination` may be the recipient itself. It may not be this contract
+    /// ([`Error::IdenticalParties`]): paying the contract would count funds
+    /// as withdrawn while they stayed locked in the stream. `None` withdraws
+    /// everything currently available. Returns the amount withdrawn.
+    pub fn withdraw_to(
+        env: Env,
+        destination: Address,
+        amount: Option<i128>,
+    ) -> Result<i128, Error> {
+        if destination == env.current_contract_address() {
+            return Err(Error::IdenticalParties);
         }
-
-        stream.withdrawn = math::add(stream.withdrawn, requested)?;
-        storage::save(&env, &stream);
-
-        Self::pay(&env, &stream, &stream.recipient, requested);
-        events::Withdrawn {
-            recipient: stream.recipient.clone(),
-            amount: requested,
-            total_withdrawn: stream.withdrawn,
-        }
-        .publish(&env);
-        Ok(requested)
+        let stream = storage::load(&env)?;
+        Self::withdraw_into(&env, stream, &destination, amount)
     }
 
     /// Cancels the stream: settles what has accrued to the recipient and
@@ -318,6 +324,39 @@ impl StreamContract {
 
 // Helpers. Outside `#[contractimpl]` so they are not contract entry points.
 impl StreamContract {
+    /// The withdrawal shared by `withdraw` and `withdraw_to`: requires the
+    /// recipient's authorization, validates `amount` against what has
+    /// accrued, records it in `withdrawn`, pays `destination`, and emits
+    /// `Withdrawn` naming both the recipient and the destination.
+    fn withdraw_into(
+        env: &Env,
+        mut stream: Stream,
+        destination: &Address,
+        amount: Option<i128>,
+    ) -> Result<i128, Error> {
+        stream.recipient.require_auth();
+
+        let available = stream.available_at(env.ledger().timestamp())?;
+        let requested = amount.unwrap_or(available);
+        math::require_positive(requested)?;
+        if requested > available {
+            return Err(Error::StreamInsufficientAccrued);
+        }
+
+        stream.withdrawn = math::add(stream.withdrawn, requested)?;
+        storage::save(env, &stream);
+
+        Self::pay(env, &stream, destination, requested);
+        events::Withdrawn {
+            recipient: stream.recipient.clone(),
+            amount: requested,
+            total_withdrawn: stream.withdrawn,
+            destination: destination.clone(),
+        }
+        .publish(env);
+        Ok(requested)
+    }
+
     /// The funding arithmetic shared by `top_up` and `top_up_from`.
     ///
     /// Checks the amount, then moves `stop` later by the seconds it buys and

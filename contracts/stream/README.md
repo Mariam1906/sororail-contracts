@@ -22,6 +22,7 @@ withdrawn + refunded + remaining == deposited
 | --- | --- | --- |
 | `create` | sender | Records the stream and pulls the full `deposited` amount in. |
 | `withdraw` | recipient | Pays out accrued, unwithdrawn funds (all of them if `amount` is `None`). |
+| `withdraw_to` | recipient | Same as `withdraw`, but pays `destination` (for example a treasury or exchange deposit address) in the same transaction. `destination` may not be the stream contract itself. |
 | `cancel` | sender | Ends a cancellable stream; returns unaccrued funds to the sender. Worked examples: [docs/stream-cancel.md](../../docs/stream-cancel.md). |
 | `top_up` | sender | Adds funds to the deposit. The amount must keep the per-second rate exact. |
 | `top_up_from` | any funder | Adds funds on behalf of a third party, who authorizes the transfer. The same rate rule applies, and cancellation still refunds the sender. See the third-party top-ups section of [SECURITY.md](../../SECURITY.md). |
@@ -58,11 +59,12 @@ Failures use the shared `Error` enum in
 | `NotInitialized` | any entry point before `create` |
 | `IdenticalParties` | `create` with `sender == recipient` |
 | `InvalidAmount` | non-positive rate or withdrawal; `top_up` not a multiple of the rate |
+| `IdenticalParties` | `withdraw_to` naming the stream contract itself as `destination` |
 | `InvalidTimeRange` | `create` with `stop <= start`; `top_up` overflowing `stop` |
 | `Overflow` | funding or accrual exceeding `i128` |
 | `StreamCancelled` | any mutation after cancellation |
 | `StreamNotCancellable` | `cancel` on a stream created with `cancellable = false` |
-| `StreamInsufficientAccrued` | `withdraw` for more than has accrued |
+| `StreamInsufficientAccrued` | `withdraw` or `withdraw_to` for more than has accrued |
 | `StreamNotExtendable` | `extend` with `new_stop` not after the current stop |
 
 Authorization failures are host errors, not typed variants: the privileged

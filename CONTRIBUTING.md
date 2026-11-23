@@ -209,8 +209,14 @@ cd contracts/common/fuzz
 cargo +nightly fuzz run fuzz_mul_div
 ```
 
-Not run in CI (fuzzing is open-ended, not pass/fail); run it locally after
-touching `math.rs`.
+Fuzzing is open-ended, so it never gates a pull request. Instead the
+[`Fuzz smoke`](.github/workflows/fuzz.yml) workflow runs every target that
+`cargo fuzz list` reports for 60 seconds each, weekly and on manual dispatch
+(Actions → Fuzz smoke → Run workflow, where the duration can be changed). If a
+target finds a crash the run fails and uploads the crashing input as the
+`fuzz-artifacts` artifact; reproduce it with
+`cargo +nightly fuzz run <target> <crash-file>`. Still run the targets locally
+after touching `math.rs`.
 
 ## Code of Conduct
 

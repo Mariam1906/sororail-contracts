@@ -7,7 +7,8 @@
 //! intentional (see the doc comment on `mul_div`), so this target only
 //! requires that a returned `Ok` value matches the reference exactly, and
 //! that no input ever produces anything other than the documented error
-//! variants.
+//! variants. With `d == 0` the error depends on the documented evaluation
+//! order: `Overflow` when `a * b` overflows, `DivisionByZero` otherwise.
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
@@ -19,7 +20,15 @@ fuzz_target!(|data: (i128, i128, i128)| {
     let result = math::mul_div(a, b, d);
 
     if d == 0 {
-        assert_eq!(result, Err(Error::DivisionByZero));
+        // `mul_div` multiplies before it divides, so an overflowing `a * b`
+        // is reported first even when `d` is zero; only a product that fits
+        // reaches the division and reports `DivisionByZero`.
+        let expected = if a.checked_mul(b).is_none() {
+            Err(Error::Overflow)
+        } else {
+            Err(Error::DivisionByZero)
+        };
+        assert_eq!(result, expected, "mul_div({a}, {b}, 0)");
         return;
     }
 

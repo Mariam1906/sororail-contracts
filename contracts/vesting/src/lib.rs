@@ -1,4 +1,9 @@
-#![forbid(unsafe_code)]
+// Unsafe code is denied, not forbidden: soroban-sdk's `#[contractimpl]` emits
+// an `#[allow(unsafe_code)]` constructor-registration shim whenever its
+// `testutils` feature is enabled (unit tests, and any test crate depending on
+// this one), and `forbid` cannot be overridden (E0453). `deny` still rejects
+// any hand-written `unsafe`.
+#![deny(unsafe_code)]
 #![no_std]
 #![doc = include_str!("../README.md")]
 

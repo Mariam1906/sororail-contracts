@@ -102,6 +102,12 @@ pub struct Escrow {
     /// Ledger timestamp at which the escrow entered `Disputed`. `None` until
     /// `dispute` runs.
     pub disputed_at: Option<u64>,
+    /// Ledger timestamp at which `init` recorded the agreement. Never changes.
+    pub created_at: u64,
+    /// Ledger timestamp at which `fund` pulled the tokens in. `None` until
+    /// `fund` runs, and stays `None` for an escrow cancelled before funding.
+    /// Kept after a terminal state so indexers can still see when it was funded.
+    pub funded_at: Option<u64>,
     /// Current lifecycle position.
     pub state: State,
 }

@@ -44,7 +44,7 @@ Every event emits topics in this order:
 | `escrow` | `Resolved` | `resolved` | `arbiter` | `split_bps`, `to_beneficiary`, `to_depositor` |
 | `escrow` | `Cancelled` | `cancelled` | `depositor` | - |
 | `stream` | `Created` | `created` | `sender` | `recipient`, `token`, `rate_per_second`, `start`, `stop`, `cancellable`, `deposited` |
-| `stream` | `Withdrawn` | `withdrawn` | `recipient` | `amount`, `total_withdrawn` |
+| `stream` | `Withdrawn` | `withdrawn` | `recipient` | `amount`, `total_withdrawn`, `destination` |
 | `stream` | `Cancelled` | `cancelled` | `sender` | `settled_to_recipient`, `refunded_to_sender`, `cancelled_at` |
 | `stream` | `ToppedUp` | `topped_up` | `sender` | `amount`, `new_stop`, `deposited` |
 | `stream` | `ToppedUpFrom` | `topped_up_from` | `funder` | `sender`, `amount`, `new_stop`, `deposited` |

@@ -251,9 +251,11 @@ pub enum FeeTokenKey {
     FeeBps,
     /// `fee_sink` (Address), where skimmed fees land.
     FeeSink,
-    /// Metadata the Soroban `token::TokenInterface` requires.
+    /// Metadata the Soroban `token::TokenInterface` requires: decimals.
     Decimals,
+    /// Token name metadata.
     Name,
+    /// Token symbol metadata.
     Symbol,
     /// Per-address balance.
     Balance(Address),

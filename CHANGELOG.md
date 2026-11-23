@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `Fuzz smoke` workflow (`.github/workflows/fuzz.yml`) runs every cargo-fuzz target for 60 seconds weekly and on manual dispatch, without gating pull requests, and uploads crash inputs as an artifact (#371). Its first run caught the `fuzz_mul_div` oracle expecting `DivisionByZero` for `d == 0` even when `a * b` overflows first; the oracle now follows `mul_div`'s documented multiply-then-divide order.
+
+- `stream::withdraw_to(destination, amount)` withdraws accrued funds like `withdraw` but pays them to `destination` in the same transaction. It requires the recipient's authorization, shares validation, accrual and accounting with `withdraw` through one private helper, and rejects the stream contract itself as a destination with `IdenticalParties` (#391).
+
 - `escrow::extend_deadline(new_deadline)` moves the deadline of a `Funded` escrow later. It requires authorization from both the depositor and the beneficiary, fails once the deadline has been reached, and emits `DeadlineExtended` with the old and new values (#377).
 - `escrow::time_to_deadline()` is a read-only view returning the seconds left until the deadline on the ledger clock, `0` once it has been reached (#378).
 - `escrow::resolve_timeout(caller)` refunds the depositor once the optional `dispute_timeout` has elapsed since `dispute`. Either party may call it. The arbiter's `resolve` remains available until then, so the first transaction to land decides the outcome (#379). The trade-off is documented in SECURITY.md.
@@ -54,6 +58,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Breaking (events):** `stream::Withdrawn` gains a `destination` data field: the recipient for `withdraw`, the chosen address for `withdraw_to`. Topics are unchanged (`["stream", "withdrawn", recipient]`), so filters keep working; decoders of the data map must add the field (#391).
+- **Breaking (ABI):** the `escrow::Escrow` record returned by `get` gains `created_at: u64` (ledger timestamp set by `init`) and `funded_at: Option<u64>` (set by `fund`; `None` before funding and for an escrow cancelled unfunded). Neither changes after it is set. Clients decoding `Escrow` must add both fields; `init` and `fund` arguments are unchanged (#380).
 - **Breaking (ABI):** `escrow::init` takes a new trailing `dispute_timeout: Option<u64>` argument, and the `Escrow` record gains `dispute_timeout` and `disputed_at` fields. Pass `None` to keep the previous behavior. `Some(0)` is rejected with `InvalidDuration`, and `Some(_)` without an arbiter with `EscrowNoArbiter`.
 - `sororail_common::Error` gains `EscrowNoDisputeTimeout` (28) and `EscrowDisputeTimeoutNotReached` (29). Existing codes are unchanged.
 - **Breaking (Rust API):** removed the unused `sororail_common::auth::allow_list`

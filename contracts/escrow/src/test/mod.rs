@@ -1,3 +1,7 @@
+// Test fixtures do plain arithmetic on known-small constants and balances; the
+// checked-math rule is for contract code (see [workspace.lints] in Cargo.toml).
+#![allow(clippy::arithmetic_side_effects)]
+
 use soroban_sdk::{
     testutils::{storage::Instance as _, Address as _, Events as _, Ledger as _},
     token::{StellarAssetClient, TokenClient},
@@ -7,7 +11,9 @@ use sororail_common::{storage::INSTANCE_BUMP, testutils::TestEnv, Error};
 
 use crate::{
     contract::{EscrowContract, EscrowContractClient},
-    events::{Cancelled, Created, DeadlineExtended, Disputed, Funded, Refunded, Released, Resolved},
+    events::{
+        Cancelled, Created, DeadlineExtended, Disputed, Funded, Refunded, Released, Resolved,
+    },
     types::State,
 };
 

@@ -30,6 +30,9 @@ pub struct Withdrawn {
     pub amount: i128,
     /// Cumulative withdrawn after this call.
     pub total_withdrawn: i128,
+    /// Where the funds were paid: the recipient for `withdraw`, the chosen
+    /// address for `withdraw_to`.
+    pub destination: Address,
 }
 
 /// The stream was cancelled: accrued settled to the recipient, remainder

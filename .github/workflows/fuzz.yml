@@ -1,0 +1,86 @@
+name: Fuzz smoke
+
+# Runs every cargo-fuzz target for a short, fixed time so the targets keep
+# building and keep holding on `main` (#371). Fuzzing is open-ended, so this
+# is a smoke test, not a gate: it runs weekly and on demand, never on pull
+# requests.
+on:
+  schedule:
+    # Mondays 03:17 UTC (off the hour to avoid the scheduler's busiest minute).
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+    inputs:
+      seconds:
+        description: "Seconds to fuzz each target"
+        required: false
+        default: "60"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fuzz:
+    name: fuzz every target
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: contracts/common/fuzz
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      # cargo-fuzz needs nightly (`-Z sanitizer`). The fuzz crate is detached
+      # from the workspace, so this does not touch the pinned stable toolchain
+      # in rust-toolchain.toml that every other job uses.
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de
+        with:
+          toolchain: nightly
+      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
+        with:
+          workspaces: contracts/common/fuzz
+      - name: cache cargo-fuzz
+        id: cargo-fuzz-cache
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4
+        with:
+          path: ~/.cargo/bin/cargo-fuzz
+          key: ${{ runner.os }}-cargo-fuzz-0.13
+      - name: install cargo-fuzz
+        if: steps.cargo-fuzz-cache.outputs.cache-hit != 'true'
+        run: cargo install cargo-fuzz --version "^0.13" --locked
+      # Every target `cargo fuzz list` reports is run, so a new target is
+      # covered without editing this workflow. All targets run even if one
+      # fails, and the job fails if any of them found a crash.
+      - name: fuzz each target
+        env:
+          FUZZ_SECONDS: ${{ inputs.seconds || '60' }}
+        run: |
+          set -euo pipefail
+          failed=()
+          for target in $(cargo +nightly fuzz list); do
+            echo "::group::fuzz ${target} for ${FUZZ_SECONDS}s"
+            if ! cargo +nightly fuzz run "${target}" -- -max_total_time="${FUZZ_SECONDS}"; then
+              failed+=("${target}")
+              echo "::error title=fuzz crash::${target} failed; the crash input is in the fuzz-artifacts upload"
+            fi
+            echo "::endgroup::"
+          done
+          if (( ${#failed[@]} )); then
+            echo "Fuzz targets with crashes: ${failed[*]}" >&2
+            exit 1
+          fi
+      # cargo-fuzz writes crashing inputs to artifacts/<target>/. Reproduce
+      # one locally with `cargo +nightly fuzz run <target> <crash-file>`.
+      - name: upload crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: fuzz-artifacts
+          path: contracts/common/fuzz/artifacts/
+          if-no-files-found: ignore
+          retention-days: 30

@@ -68,6 +68,8 @@ fn withdraw_event_amount_matches_the_token_transfer() {
         recipient: f.recipient.clone(),
         amount: transferred,
         total_withdrawn: f.client.get().withdrawn,
+        // Plain `withdraw` pays the recipient itself.
+        destination: f.recipient.clone(),
     };
     assert_eq!(last, &expected.to_xdr(&f.env, &f.client.address));
 }
@@ -214,4 +216,25 @@ fn extend_event_carries_the_old_and_new_stop_times() {
         deposited: DEPOSITED + RATE * 300,
     };
     assert_eq!(last, &expected.to_xdr(&f.env, &f.client.address));
+}
+
+#[test]
+fn withdraw_to_event_names_the_destination() {
+    let f = Fixture::new(true);
+    let treasury = Address::generate(&f.env);
+    f.at(START + 300);
+    let withdrawn = f.client.withdraw_to(&treasury, &Some(RATE * 100));
+
+    let all = f.env.events().all();
+    let events = all.events();
+    let last = events.last().expect("no events emitted");
+    let expected = Withdrawn {
+        // The recipient stays the indexed topic: it is whose funds moved.
+        recipient: f.recipient.clone(),
+        amount: withdrawn,
+        total_withdrawn: RATE * 100,
+        destination: treasury.clone(),
+    };
+    assert_eq!(last, &expected.to_xdr(&f.env, &f.client.address));
+    assert_eq!(f.token.balance(&treasury), RATE * 100);
 }

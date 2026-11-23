@@ -14,6 +14,9 @@ fn init_stores_the_agreement() {
     assert_eq!(e.amount, AMOUNT);
     assert_eq!(e.deadline, DEADLINE);
     assert_eq!(e.state, State::Created);
+    // Timestamps (#380): created now, not funded yet.
+    assert_eq!(e.created_at, START_TS);
+    assert_eq!(e.funded_at, None);
     // Nothing has moved yet.
     assert_eq!(f.escrow_balance(), 0);
 }
@@ -29,6 +32,8 @@ fn get_returns_all_agreement_fields() {
     assert_eq!(e.amount, AMOUNT);
     assert_eq!(e.deadline, DEADLINE);
     assert_eq!(e.state, State::Created);
+    assert_eq!(e.created_at, START_TS);
+    assert_eq!(e.funded_at, None);
 
     // Without an arbiter, `None` round-trips too.
     let g = Fixture::new(false);
